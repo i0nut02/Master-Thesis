@@ -1,0 +1,344 @@
+\chapter{Design and Implementation}
+\label{chap:design-implementation}
+
+\section{System Architecture}
+\label{sec:system-architecture}
+
+This chapter presents the design and implementation of an IVF-Flat approximate nearest-neighbour search system on a single Tenstorrent device using TT-Metalium. The objective is to map the regular parts of IVF search onto the tile-oriented Tensix execution model while handling the irregularity introduced by query-dependent inverted-list selection and unequal list sizes.
+
+The implementation is organised around two principal device programs: a \emph{coarse-search program}, which compares queries with the IVF centroids, and a \emph{fine-search program}, which evaluates candidate vectors from the selected inverted lists and reduces the results to the final top-\(k\). Host-side processing connects the two phases by selecting the \(N_{\mathrm{probe}}\) lists returned by coarse search and constructing the work schedule used by the fine-search workers.
+
+\subsection{End-to-End Search Pipeline}
+\label{subsec:end-to-end-pipeline}
+
+Figure~\ref{fig:ivf-search-pipeline} shows the logical IVF-Flat search pipeline. A query is first compared with all \(N_{\mathrm{list}}\) centroids, after which the \(N_{\mathrm{probe}}\) most similar centroids identify the inverted lists to be searched. Candidate vectors contained in those lists are then compared with the query, and the final top-\(k\) scores and vector identifiers are selected from the resulting similarities.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.90\textwidth]{./assets/ivf_search_pipeline.png}
+\caption{Logical IVF-Flat query-processing pipeline. The query is first compared with all \(N_{\mathrm{list}}\) centroids. The \(N_{\mathrm{probe}}\) best cells are selected, their vectors define the candidate set, and the final top-\(k\) results are selected from the candidate similarities.}
+\label{fig:ivf-search-pipeline}
+\end{figure}
+
+The figure is intentionally logical rather than physical: selected candidates are not copied into a single temporary matrix. Instead, database vectors remain grouped by inverted list in device memory and are streamed directly from the selected list ranges during fine search.
+
+Queries are represented internally in groups of at most 32, matching the row dimension of the \(32\times32\) tile representation used by the Tensix compute kernels. For a workload containing \(Q\) valid queries, the implementation uses
+\begin{equation}
+B=\left\lceil\frac{Q}{32}\right\rceil
+\end{equation}
+internal query batches. The final batch is padded when \(Q\) is not divisible by 32. Padded rows do not participate in coarse-search processing and therefore do not contribute additional inverted lists to the fine-search schedule.
+
+Although the implementation is described throughout the chapter in terms of one 32-query batch for clarity, the final system can process multiple such batches within one coarse-search and one fine-search invocation. The transition from the initial single-batch implementation to this multi-batch design is discussed in Section~\ref{sec:multi-batch-execution}.
+
+\subsection{Host--Device Responsibilities}
+\label{subsec:host-device-responsibilities}
+
+The index data required by both search stages remain resident on the Tenstorrent device across query workloads, including the centroid matrix, database vectors grouped by inverted list, and the corresponding original vector identifiers. In contrast, query-dependent data, such as the query buffer, coarse-search outputs, selected-list metadata, worker schedules, partial results, and final outputs, are updated for each search workload.
+
+A synchronization boundary separates the coarse and fine programs. After the device executes coarse search and returns a fixed-size set of centroid candidates for each valid query, the host performs the final \(N_{\mathrm{probe}}\) selection, determines the corresponding inverted-list ranges, groups the selected work at batch granularity, and constructs the per-worker fine-search descriptions. Only once this query-dependent schedule has been prepared is the fine-search program launched.
+
+Figure~\ref{fig:host-device-pipeline} shows the division of responsibilities between the host and the device, together with the synchronization boundary between coarse and fine search.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.80\textwidth]{./assets/host_device_pipeline.png}
+\caption{Host--device interaction during one IVF search workload. The host loads the IVF index and query batch, launches the coarse-search program, receives the coarse-search results, selects the \(N_{\mathrm{probe}}\) lists and builds the fine-search schedule, then launches the fine-search program and fetches the final top-\(k\) results.}
+\label{fig:host-device-pipeline}
+\end{figure}
+
+Each device program is decomposed into reader, compute, and writer kernels connected through circular buffers, allowing data movement and computation to overlap when dependencies and buffer capacity permit it. Accordingly, the terms \emph{coarse phase} and \emph{fine phase} refer to complete TT-Metalium programs rather than to individual kernels.
+
+\section{Device-Oriented IVF Representation}
+\label{sec:device-oriented-ivf}
+
+\subsection{Index Construction}
+\label{subsec:index-construction}
+
+The IVF-Flat index is trained using Faiss \cite{faiss}: a representative subset of the database vectors is clustered with \(k\)-means to obtain \(N_{\mathrm{list}}\) centroids, following the same training procedure used by the CPU and GPU baselines based on Faiss \texttt{IndexIVFFlat}. The trained centroid matrix is exported and reused by the Tenstorrent implementation, which assigns each database vector to its closest centroid when constructing the device-oriented inverted-list representation.
+
+The Tenstorrent index stores full, uncompressed database vectors rather than compressed representations. Database vectors and centroids are normalised before assignment and search, allowing inner product to be used as the similarity measure.
+
+Because the resulting inverted lists are not guaranteed to have equal sizes, assigning the same number of lists to every core does not necessarily assign the same amount of work. The fine-search scheduler therefore reasons about the number of 32-vector pages contained in each selected list rather than only the number of lists.
+
+\subsection{Tiled Data Layout and Memory Placement}
+\label{subsec:tiled-list-layout}
+
+As introduced in Chapter~\ref{chap:background}, Tensix computation is organised around \(32\times32\) tiles \cite{tenstorrent_metalium_architecture}. Let \(D\) denote the original vector dimension. To match this tile-oriented execution model, the dimension is padded to
+\begin{equation}
+D_{\mathrm{p}}=32\left\lceil\frac{D}{32}\right\rceil.
+\label{eq:dimension-padding}
+\end{equation}
+All values introduced by dimensional padding are set to zero on the host before the data are transferred to the device.
+
+Vectors assigned to the same inverted list are stored consecutively in one logical packed database buffer. For a list containing \(L_j\) valid vectors, its stored length is rounded to a multiple of 32:
+\begin{equation}
+L_{j,\mathrm{p}}=32\left\lceil\frac{L_j}{32}\right\rceil.
+\label{eq:list-padding}
+\end{equation}
+Each group of 32 vectors forms one \emph{candidate page}. A page contains \(D_{\mathrm{p}}/32\) FP16 data tiles, each of shape \(32\times32\), which together represent the 32 candidate vectors over the complete padded dimension. Centroids and queries use the same FP16 representation, while vector identifiers are stored as UInt32.
+
+For every candidate page, one full \(32\times32\) UInt32 identifier tile is stored. In its DRAM representation, each column corresponds to one candidate vector and the same 32 identifiers are replicated across all query rows. For candidate identifiers \(i_0,\ldots,i_{31}\), the stored tile is
+\begin{equation}
+I^{\mathrm{stored}}=
+\begin{bmatrix}
+i_0 & i_1 & \cdots & i_{31}\\
+i_0 & i_1 & \cdots & i_{31}\\
+\vdots & \vdots & \ddots & \vdots\\
+i_0 & i_1 & \cdots & i_{31}
+\end{bmatrix}.
+\label{eq:identifier-tile}
+\end{equation}
+Before the compute-kernel \texttt{topk\_local\_sort} operation, both the similarity tile and its companion identifier tile are transposed. The identifier tile presented to the selection operation is therefore
+\begin{equation}
+I^{\mathrm{topk}}
+=
+\left(I^{\mathrm{stored}}\right)^{\mathsf T}
+=
+\begin{bmatrix}
+i_0 & i_0 & \cdots & i_0\\
+i_1 & i_1 & \cdots & i_1\\
+\vdots & \vdots & \ddots & \vdots\\
+i_{31} & i_{31} & \cdots & i_{31}
+\end{bmatrix}.
+\label{eq:identifier-tile-topk}
+\end{equation}
+After transposition, each column corresponds to one query and the rows represent candidate entries. The \texttt{topk\_local\_sort} operation sorts candidate entries independently for each query column. Applying the same transpose and ordering operations to the score and identifier tiles preserves the association between every similarity value and its original database-vector identifier. This transpose-and-sort mechanism is used by both coarse and fine search whenever a running top-32 score and identifier state is updated.
+
+The vectors of all inverted lists are stored sequentially in a single packed device buffer. Each inverted list is identified by its offset within this buffer and by its length, rather than being stored in a separate device allocation. Vector identifiers occupy a separate packed UInt32 buffer using the same list and page ordering. An inverted-list offset therefore identifies a position in this global logical representation. At the physical memory level, TT-Metalium interleaves buffer pages across DRAM banks, so ``contiguous'' refers to the logical buffer layout rather than to consecutive bytes within one DRAM bank.
+
+Persistent search data are allocated in device DRAM, including the centroid matrix, packed database-vector buffer, and packed vector-identifier buffer. Query buffers and worker descriptions are likewise allocated in DRAM for each search workload, while per-core L1 memory is used as transient kernel-local storage through circular buffers. During execution, data required by the active kernels are streamed from DRAM into L1 rather than persistently cached across search invocations. The exact reuse and streaming strategy of the coarse- and fine-search programs is described in Sections~\ref{sec:coarse-search} and~\ref{subsec:fine-worker-pipeline}, respectively.
+\newline
+Padding is performed entirely on the host before device transfer:
+\begin{itemize}
+    \item database dimensional padding and inverted-list length padding are generated during \texttt{IVF\_TT::create\_index}.
+    \item centroid dimensional padding is generated while constructing the centroid buffer in \texttt{load\_to\_device}.
+    \item query dimensional padding and final-batch row padding are generated in \texttt{search\_all}.
+\end{itemize}
+Padded vector identifiers are assigned the sentinel value \texttt{0xffffffff} on the host.
+
+Padded candidate positions contain zero-valued vectors and carry the sentinel identifiers defined above. Before local top-\(k\) selection, the fine-search compute kernel linearly scans the score and identifier entries of the final partially populated tile. Whenever a sentinel identifier is encountered, the corresponding similarity value is replaced with negative infinity, preventing padded candidates from displacing valid results during selection. Complete candidate pages contain 32 valid vectors and bypass this masking step, avoiding an unnecessary scan of all \(32\times32=1024\) entries when no padding is present.
+
+\section{Coarse Search}
+\label{sec:coarse-search}
+
+The purpose of coarse search is to identify the inverted lists most relevant to each query. For a valid query batch \(Q_b\in\mathbb{R}^{32\times D_{\mathrm{p}}}\) and centroid matrix \(C\in\mathbb{R}^{D_{\mathrm{p}}\times N_{\mathrm{list}}}\), the logical operation is
+\begin{equation}
+S^{\mathrm{coarse}}_b=Q_bC,
+\label{eq:coarse-search}
+\end{equation}
+where each row of \(S^{\mathrm{coarse}}_b\) contains the similarities between one query and all centroids.
+
+Tiling proceeds over blocks of 32 centroids. After loading the query batch from DRAM into an L1 circular buffer, the reader kernel streams centroid blocks from device DRAM while retaining the query for reuse across the complete centroid matrix.
+
+For every centroid block, a \(32\times D_{\mathrm{p}}\) by \(D_{\mathrm{p}}\times32\) matrix multiplication produces one \(32\times32\) similarity tile. Rather than materialising all \(N_{\mathrm{list}}\) similarity values in DRAM, the compute kernel incrementally maintains the 32 highest centroid scores and their identifiers for each query row. This running top-32 state uses the same transpose-and-\texttt{topk\_local\_sort} mechanism described in Section~\ref{subsec:tiled-list-layout}, with identical ordering decisions applied to scores and centroid identifiers.
+
+Once all centroid blocks have been processed, one score tile and one identifier tile per query batch are stored by the writer. After copying these results back, the host orders and deduplicates the valid centroid identifiers and retains the first \(N_{\mathrm{probe}}\) lists for each query. Consequently, the current implementation limits \(N_{\mathrm{probe}}\) to at most 32.
+
+Multiple query batches are distributed by the coarse-search program across the available participating cores, with each active core processing one or more complete batches and avoiding inter-core communication during the centroid scan. Because every valid query is evaluated against the same centroid matrix, coarse search remains regular and requires a predictable amount of work.
+
+\section{Fine-Search Scheduling}
+\label{sec:fine-search-scheduling}
+
+Fine search introduces the principal source of irregularity in the system. Although every query selects the same number \(N_{\mathrm{probe}}\) of inverted lists, the selected lists can contain substantially different numbers of vectors. Assigning work only by list count can therefore leave some Tensix cores processing large lists while others finish considerably earlier.
+
+Work is therefore scheduled in units of 32-vector candidate pages, exposing the actual amount of similarity computation associated with a selected list and enabling a more balanced distribution across the fine-search workers.
+
+\subsection{Batch-Level List Union}
+\label{subsec:batch-level-union}
+
+After coarse search, each query row has up to \(N_{\mathrm{probe}}\) selected inverted-list identifiers. Since fine search operates on a complete batch of up to 32 queries, the host collects these identifiers into a single set of lists for the batch.
+
+Let \(\mathcal{P}_{b,r}\) denote the \(N_{\mathrm{probe}}\) lists selected for query row \(r\) of batch \(b\). The set of lists processed for the batch is
+\begin{equation}
+\mathcal{U}_b
+=
+\bigcup_{r\in\mathcal{V}_b}
+\mathcal{P}_{b,r},
+\label{eq:batch-union}
+\end{equation}
+where \(\mathcal{V}_b\) contains the valid query rows of the batch.
+
+Operationally, the host iterates over the coarse-search results of every valid query row and inserts the first \(N_{\mathrm{probe}}\) list identifiers into a set. Duplicate identifiers are therefore automatically removed. The resulting set \(\mathcal{U}_b\) contains every inverted list selected by at least one query in the batch.
+
+The batch-level union is motivated by the execution granularity of the Tensix matrix engine. Fine search operates on \(32\times32\) tiles: one candidate page contains 32 vectors, while one query tile contains up to 32 queries. For a candidate page \(V_p\), the device evaluates
+\begin{equation}
+Q_bV_p,
+\qquad
+Q_b\in\mathbb{R}^{32\times D_{\mathrm{p}}},
+\qquad
+V_p\in\mathbb{R}^{D_{\mathrm{p}}\times32},
+\end{equation}
+producing a \(32\times32\) similarity tile.
+
+Because Tensix executes the matrix multiplication at tile granularity, processing a candidate page for only one query row does not reduce the cost of the matrix operation relative to processing it for the complete query tile. A computation conceptually involving a \(1\times D_{\mathrm{p}}\) query would still occupy the same tiled execution unit after padding to the required representation. Therefore, once a candidate page is selected for processing, evaluating it against the remaining queries of the batch does not require an additional matrix multiplication.
+
+As a consequence, a query can also obtain similarity scores for vectors belonging to a list that was selected by another query in the same batch. The effective candidate set for one query can therefore be larger than the set defined by its own \(N_{\mathrm{probe}}\) lists. This is an implementation consequence of processing the batch-level union and does not modify the stored IVF index.
+
+The union can nevertheless increase the total amount of fine-search work because lists selected by different queries may not overlap, increasing the number of distinct candidate pages that must be processed. The benefit of the design therefore comes from fully exploiting each tile-level matrix multiplication, rather than from making the additional lists computationally free.
+
+\subsection{Greedy Work Distribution}
+\label{subsec:greedy-work-distribution}
+
+The host converts the selected inverted lists into fine-search tasks, each identifying a contiguous range of candidate pages together with the list offset, number of valid vectors, and padded extent.
+
+Because list sizes are unequal, work is weighted by the number of candidate pages rather than by the number of lists.
+
+The final scheduler uses a greedy page-based strategy, considering tasks according to their estimated amount of work and assigning each one to the worker whose current page load is smallest. The objective is to balance the number of candidate pages processed by the fine-search workers while preserving contiguous reads from each list range.
+
+After coarse search, the host serialises the resulting assignment into one description per fine-search core, containing the metadata required by the worker reader kernels to locate the selected candidate pages in device memory.
+
+\subsection{Worker Description}
+\label{subsec:worker-description}
+
+The host serialises the fine-search assignment into one flattened worker description stored in DRAM for each fine-search core. The description contains the information required by the reader kernel to locate the query batches and the portions of the packed inverted-list buffers assigned to that worker.
+
+Let \(B\) denote the number of query batches, as introduced in Section~\ref{subsec:end-to-end-pipeline}. The worker description has the conceptual form
+\begin{equation}
+W_w
+=
+\left\langle
+B,\,
+R_0,\,
+R_1,\,
+\ldots,\,
+R_{B-1}
+\right\rangle,
+\label{eq:worker-description}
+\end{equation}
+where \(R_b\) describes the work assigned to worker \(w\) for query batch \(b\).
+
+Each batch record contains the global offset of the query batch in the query buffer, the number of tiles used to represent it, and the number of inverted-list ranges that the worker must process:
+\begin{equation}
+R_b
+=
+\left\langle
+o^{Q}_b,\,
+n^{Q}_b,\,
+N^{(w)}_{\mathrm{range},b},\,
+L_{b,0},\,
+L_{b,1},\,
+\ldots,\,
+L_{b,N^{(w)}_{\mathrm{range},b}-1}
+\right\rangle,
+\label{eq:worker-batch-record}
+\end{equation}
+where \(o^{Q}_b\) is the global offset of query batch \(b\) in the query buffer, \(n^{Q}_b\) is the number of tiles composing its padded representation, and \(N^{(w)}_{\mathrm{range},b}\) is the number of inverted-list ranges assigned to worker \(w\) for that batch.
+
+Each inverted-list entry is represented as
+\begin{equation}
+L_{b,j}
+=
+\left\langle
+o_{b,j},\,
+\ell_{b,j}
+\right\rangle,
+\label{eq:worker-list-record}
+\end{equation}
+where \(o_{b,j}\) is the global candidate-page offset of the assigned inverted-list range in the packed database buffer, and \(\ell_{b,j}\) is the length of that range, expressed as the number of candidate pages that must be processed. Since each candidate page contains 32 vectors, these two values are sufficient for the reader kernel to determine where the assigned range begins and how many candidate-vector and identifier tiles must be fetched from their respective packed buffers.
+
+At the beginning of fine search, each worker copies its description from DRAM into local L1. For each batch with assigned work, the corresponding query tiles are loaded once into the local query circular buffer and remain resident while all inverted-list ranges associated with that batch are processed. The reader then advances to the next batch record and repeats the same procedure.
+
+\section{Fine Search and Result Reduction}
+\label{sec:fine-search-and-reduction}
+
+\subsection{Worker Pipeline}
+\label{subsec:fine-worker-pipeline}
+
+The fine-search program evaluates the candidate pages selected by the host schedule. Logical core \((0,0)\) is reserved for the final aggregation stage, while the remaining participating cores operate as fine-search workers.
+
+Each worker executes reader, compute, and writer kernels concurrently. At the beginning of the invocation, the reader loads the worker description from DRAM into local L1; for each active query batch, the query tiles are then loaded once into the worker's query circular buffer and retained while all candidate pages assigned to that worker for the batch are processed.
+
+Candidate vectors and their identifier tiles are streamed from the packed DRAM buffers, with both reads issued before synchronization so that their NoC transfers can overlap. Double-buffering of the candidate circular buffers allows the reader to prepare a later page while the compute kernel operates on an earlier one, subject to circular-buffer capacity and producer--consumer synchronization.
+
+For one candidate page \(V_{t,p}\in\mathbb{R}^{D_{\mathrm{p}}\times32}\), the compute kernel evaluates
+\begin{equation}
+S^{\mathrm{fine}}_{b,t,p}=Q_bV_{t,p},
+\label{eq:fine-search}
+\end{equation}
+producing a \(32\times32\) tile of query--candidate similarities.
+
+Across all candidate pages assigned to it, the worker incrementally maintains a row-wise top-32 state, with scores and original vector identifiers propagated together through the same ordering operations. No list-local to global identifier reconstruction is therefore required after the search.
+
+Figure~\ref{fig:fine-local-topk} shows the local top-32 update performed by one fine-search worker. Two \(32\times32\) tiles hold the best scores and identifiers found so far, while the other two contain the scores and identifiers of the current candidate page. Before selection, the current and saved score and identifier tiles are transposed so that each column corresponds to one query and the rows contain candidate entries. The compute-kernel \texttt{topk\_local\_sort} operation then applies the same ordering decisions to the score and identifier tiles, preserving the association between every similarity value and its original vector identifier.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.78\textwidth]{./assets/fine_search_local_topk.png}
+\caption{Worker-local top-32 update. Before selection, the score and identifier tiles are transposed so that each column corresponds to one query and the rows contain candidate entries from the saved and current states. The \texttt{topk\_local\_sort} operation applies identical ordering decisions to scores and identifiers.}
+\label{fig:fine-local-topk}
+\end{figure}
+
+\subsection{Hierarchical Top-\(k\)}
+\label{subsec:hierarchical-topk}
+
+A single worker observes only part of the candidate set, so the final result is computed hierarchically. For query row \(r\) in batch \(b\), worker \(w\) first retains
+\begin{equation}
+R_{b,w,r}=\operatorname{Top}_{32}\left(\mathcal{C}_{b,w,r}\right),
+\label{eq:worker-top32}
+\end{equation}
+where \(\mathcal{C}_{b,w,r}\) is the set of candidates evaluated by that worker.
+
+Worker-local results are staged in DRAM, with each configured worker writing one fixed-size score tile and one identifier tile per query batch to a region indexed by batch and worker. All configured workers produce and signal one partial result for every batch, even when a worker has no active list task for that batch; in that case, the result contains the initial sentinel top-32 state.
+
+Synchronization uses a cumulative completion semaphore in the L1 memory of logical core \((0,0)\). After writing its partial result for a batch, each worker increments this semaphore, and the aggregation reader waits until the expected number of increments has been observed. Once the partial result of a worker has been consumed, the aggregation reader increments a worker-specific ready semaphore in that worker's L1 memory, allowing the worker to reuse its partial-result slot and advance to the next batch.
+
+Figure~\ref{fig:fine-partial-staging} illustrates this two-way handshake. Fine-search workers write their local top-32 results to distinct locations in the shared DRAM partial-result buffer and signal completion to the aggregation core; after consuming those results, core \((0,0)\) signals the corresponding workers that their slots can be reused.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.78\textwidth]{./assets/fine_search_partial_results.png}
+\caption{DRAM staging and synchronization of fine-search partial results. Workers store their local top-32 results in DRAM and synchronize with the aggregation core through completion and ready semaphores.}
+\label{fig:fine-partial-staging}
+\end{figure}
+
+The aggregation compute kernel performs the second reduction,
+\begin{equation}
+R_{b,r}=\operatorname{Top}_{32}\left(\bigcup_w R_{b,w,r}\right),
+\label{eq:global-top32}
+\end{equation}
+and writes one final score tile and one final identifier tile per batch to DRAM. The host converts the tiled outputs to row-major form, removes sentinel entries, discards padded query rows, and retains the first \(k\) results for every valid query. The implementation therefore supports \(k\leq32\).
+
+Because all worker-local results are ultimately merged by logical core \((0,0)\), the amount of aggregation work grows with the number of participating fine-search workers. Centralised aggregation therefore represents a potential scaling constraint at larger worker counts.
+
+\section{Multi-Batch Execution}
+\label{sec:multi-batch-execution}
+
+The first implementation processed one batch of at most 32 queries per search invocation. This design matched the \(32\times32\) tile representation and simplified the initial implementation, but a larger query workload required the host to repeat query preparation, coarse execution, synchronization, list selection, fine-search scheduling, fine execution, final result transfer, and host-side orchestration for every group of 32 queries.
+
+The final implementation, represented by \texttt{ann\_ivf\_dram\_args}, retains the same 32-query internal representation while allowing one search call to process multiple batches. After a coarse-search invocation processes all valid batches of the workload, the host constructs the fine-search descriptions for the complete set of selected lists, which the fine-search program then processes within one larger invocation.
+
+This change separates tile size from execution granularity: a batch of 32 queries remains the natural unit of matrix computation, but it is no longer the unit at which the complete device pipeline must be launched. Repeated program configuration, launch, synchronization, and host orchestration are consequently amortised across a larger number of queries.
+
+\section{Implementation Constraints}
+\label{sec:implementation-constraints}
+
+\subsection{Tile and Local-Memory Constraints}
+
+The Tensix compute model strongly influences the representation of queries, centroids, candidate vectors, scores, and identifiers: query counts, vector dimensions, and inverted-list lengths that do not align with the \(32\times32\) tile dimensions require padding. The fixed tile size also motivates processing 32 query rows and 32 candidate vectors together during fine search. The current centroid representation additionally requires \(N_{\mathrm{list}}\) to be divisible by 32, since coarse search traverses the centroid matrix in complete 32-centroid blocks.
+
+Reader, compute, and writer kernels share the local L1 capacity available to the program through their circular buffers, intermediate similarity tiles, query buffers, identifier tiles, top-\(k\) state, and worker metadata. Buffer depth must therefore balance data reuse and double buffering against the available local memory.
+
+\subsection{Irregular Workload Constraints}
+
+IVF introduces both query-dependent and data-dependent work: selected list identifiers are not known until coarse search has completed, and the selected lists can contain unequal numbers of candidate pages. The host boundary between the coarse and fine programs is therefore used both for final \(N_{\mathrm{probe}}\) selection and for generation of the page-based fine-search schedule.
+
+The worker descriptions have finite capacity. The number of query batches that can be processed within one invocation is also bounded by the query, worker-metadata, partial-result, and output buffers allocated by the program. The implementation should therefore be described as supporting multiple query batches within the allocated buffer and metadata limits rather than as unbounded.
+
+\subsection{Selection and Synchronization Constraints}
+
+As a consequence of the fixed top-32 states described above, the current implementation supports \(N_{\mathrm{probe}}\leq32\) and \(k\leq32\). Before local selection, padded candidate values in the last partial page must be converted to a negative similarity sentinel so that they cannot displace valid results.
+
+The pipeline also depends on circular-buffer producer--consumer synchronization and NoC completion. Although reader, compute, and writer kernels can overlap, progress remains limited by buffer availability and dependencies between stages. In the final fine-search design, worker-local results are staged in DRAM and consumed by the aggregation core only after the corresponding worker completion signals are observed.
+
+Finally, the implementation evaluated in this thesis targets a single Tenstorrent device. TT-Metalium mesh abstractions are used by the software stack, but multi-device approximate nearest-neighbour (ANN) execution is outside the scope of this work.
+
+\section{Chapter Summary}
+\label{sec:design-summary}
+
+This chapter described the implementation of IVF-Flat search on a single Tenstorrent device, with the index transformed into a tile-oriented representation in which vectors are grouped by inverted list and stored in 32-vector pages together with their original identifiers.
+
+The search pipeline is divided into a regular coarse-search phase and an irregular fine-search phase. While coarse search reuses query tiles to scan the centroid matrix and return a fixed-size set of centroid candidates, the host subsequently selects the \(N_{\mathrm{probe}}\) lists, forms batch-level unions, and distributes candidate pages across workers using a greedy page-based scheduler.
+
+Reusing one query batch while streaming their assigned candidate pages, fine-search workers maintain worker-local row-wise top-32 states. The resulting partial results are staged in DRAM and merged on a dedicated aggregation core before the final outputs are returned to the host.
+
+The final design preserves the natural 32-query tile representation while extending execution to multiple batches per invocation. This reduces repeated host--device orchestration while preserving the same coarse- and fine-search stages and using batch-level list unions to match the tile-oriented execution model. The following chapter defines the methodology used to evaluate the resulting implementation.

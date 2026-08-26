@@ -1,0 +1,20 @@
+.DS_Store
+
+# LaTeX-generated files
+*.aux
+*.bbl
+*.blg
+*.bcf
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+*.xdv
+
+# Duplicate default build output; the published document is src/thesis.pdf
+/src/main.pdf

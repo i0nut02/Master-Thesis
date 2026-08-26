@@ -1,0 +1,94 @@
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=red}
+
+\chapter{Introduction}
+\label{chap:introduction}
+
+\section{Motivation}
+
+Modern artificial-intelligence systems increasingly rely on external retrieval components to access information that is not contained directly in a model's parameters. Retrieval-Augmented Generation, or RAG, is a common example: before generating an answer, the system retrieves documents or document fragments that are relevant to the input query and provides them as additional context to the language model.
+
+The retrieval stage is commonly implemented using a vector database. Documents are transformed into a dataset of high-dimensional embedding vectors
+\begin{equation}
+\mathcal{D}=\left\{\mathbf{x}_1,\mathbf{x}_2,\ldots,\mathbf{x}_n\right\}, \qquad \mathbf{x}_i\in\mathbb{R}^{d},
+\end{equation}
+while an incoming query is encoded as a vector \(\mathbf{q}\in\mathbb{R}^{d}\) in the same embedding space. The database then searches for the \(k\) vectors in \(\mathcal{D}\) that are most similar to \(\mathbf{q}\). These vectors correspond to the documents that are expected to contain the most relevant information.
+
+At large scale, vector retrieval can become an important systems bottleneck. A production service may need to process large numbers of queries over datasets containing millions or billions of vectors. Exhaustively comparing every query with every stored vector provides exact results, but its cost grows linearly with the dataset size. Approximate nearest-neighbor indexes reduce this cost by examining only a subset of the indexed vectors, trading a limited amount of recall for higher throughput and lower latency.
+
+Most existing vector-search systems are optimized for conventional CPUs and GPUs. CPUs are effective for irregular graph traversal and branch-heavy algorithms, while GPUs provide high throughput for regular batched computations. However, both architectures may consume substantial power when serving large retrieval workloads. This motivates the investigation of alternative hardware architectures that can provide competitive search quality and performance with lower whole-system energy consumption.
+
+Tenstorrent processors are spatial many-core accelerators designed primarily for machine-learning workloads. They consist of grids of programmable Tensix cores connected through Networks-on-Chip and rely on explicitly managed data movement and distributed local memory \cite{tenstorrent_metalium_architecture}. These characteristics make Tenstorrent promising for regular and highly parallel operations, but it is not immediately clear whether they are also suitable for approximate nearest-neighbor search.
+
+This thesis investigates whether vector retrieval can be efficiently implemented on Tenstorrent hardware. The broader motivation is to evaluate whether the same energy-efficient architecture used for machine-learning inference can also support the retrieval stage of AI systems such as RAG. A successful implementation could reduce the need to execute retrieval and model inference on separate classes of hardware and could provide a lower-energy platform for large-scale vector search.
+
+\section{Problem Statement}
+\label{sec:problem-statement}
+
+Given the dataset \(\mathcal{D}\) and query vector \(\mathbf{q}\) introduced above, the nearest-neighbor search problem consists of retrieving the \(k\) vectors in \(\mathcal{D}\) that are closest to \(\mathbf{q}\) according to a chosen distance or similarity measure.
+
+An exact implementation evaluates the distance between the query and every vector in the dataset. For a dataset of \(n\) vectors of dimension \(d\), its computational complexity is \(O(nd)\) per query, excluding the final top-\(k\) selection. Although this computation is regular and highly parallel, its cost becomes significant as \(n\) grows.
+
+Approximate nearest-neighbor search reduces the number of evaluated vectors by using an index that identifies a smaller candidate set
+\begin{equation}
+\mathcal{D}_{\mathrm{candidate}}(\mathbf{q})\subset\mathcal{D}.
+\end{equation}
+The final results are selected only from this candidate set. Consequently, some of the true nearest neighbors may be excluded before their distance from the query is evaluated. The central trade-off is therefore between search quality and execution cost: searching more candidates generally improves recall but also increases latency, memory traffic, energy consumption, and hardware utilization.
+
+A formal definition of the exact and approximate versions of the nearest-neighbor search problem, together with the notation and recall metric used throughout the thesis, is given in Section~\ref{sec:ann}.
+
+The problem addressed by this thesis is the design and evaluation of an approximate nearest-neighbor search system for Tenstorrent hardware. The implementation must account for the architectural properties of Tensix cores, including tile-based computation, explicitly managed DRAM transfers, limited per-core local memory, distributed execution, and synchronization over the Network-on-Chip.
+
+The thesis focuses on the following challenges:
+
+\begin{itemize}
+\item identifying an ANN index whose computation and memory-access patterns are compatible with Tenstorrent hardware;
+\item mapping coarse search, fine search, candidate selection, and top-\(k\) processing onto Tensix cores;
+\item organizing queries and indexed vectors to exploit tile-oriented batch execution;
+\item reducing irregular memory accesses and unnecessary host--device communication;
+\item evaluating the resulting trade-off among recall, throughput, energy consumption, and infrastructure cost;
+\item identifying the main bottlenecks that limit the performance of the current implementation.
+\end{itemize}
+
+\section{Research Questions}
+
+This thesis is guided by the following research questions:
+
+\begin{enumerate}
+\item Which approximate nearest-neighbor index structure is most suitable for the current Tenstorrent architecture and programming model?
+
+\item Can an IVF-based ANN search pipeline be implemented efficiently using tile-oriented computation, explicit data movement, and distributed Tensix cores?
+
+\item What recall and throughput can the Tenstorrent implementation achieve compared with multicore CPU systems and an NVIDIA A100 GPU system?
+
+\item How does the whole-system energy consumption of Tenstorrent compare with CPU- and GPU-based ANN implementations at approximately matched recall?
+
+\item Which stages of the Tenstorrent search pipeline dominate execution time, and which architectural or software limitations are responsible for the observed bottlenecks?
+
+\item Under a simplified hardware-acquisition and electricity-cost model, in which operating regions can Tenstorrent provide a cost advantage over conventional CPU and GPU systems?
+\end{enumerate}
+
+\section{Contributions}
+
+The main contributions of this thesis are:
+
+\begin{enumerate}
+\item An analysis of the suitability of major ANN index families for the Tenstorrent architecture, including IVF, graph-based methods, CAGRA, IVF-PQ, and ScaNN.
+
+\item The design and implementation of an IVF-Flat search pipeline on Tenstorrent hardware, including coarse centroid search, cluster selection, distributed fine search, and result processing.
+
+\item A Tenstorrent-specific execution strategy that organizes work around batches of queries and selected cluster sets rather than independent query--cluster tasks.
+
+\item A quality-normalized experimental comparison against two multicore CPU configurations and an NVIDIA A100 GPU system.
+
+\item A whole-system energy and electricity-cost analysis across several recall operating points.
+
+\item A stage-level decomposition of the Tenstorrent search path, showing the relative contribution of host preparation, host-to-device transfers, coarse search, fine search, and output processing.
+
+\item An identification of the main performance limitations of the implementation and a discussion of possible future optimizations and alternative ANN designs.
+\end{enumerate}
+
+\section{Thesis Organization}
+
+The remainder of this thesis is organized as follows. Chapter~\ref{chap:background} introduces approximate nearest-neighbor search, reviews the main index families, describes GPU-specialized approaches, and motivates the selection of IVF-Flat for Tenstorrent. The following chapter presents the system design and implementation, including data layout, coarse search, fine search, scheduling, and device-side execution. The evaluation chapter describes the experimental setup and compares the CPU, GPU, and Tenstorrent systems in terms of recall, throughput, energy efficiency, and infrastructure cost. It also presents the Tenstorrent stage decomposition and bottleneck analysis. The final chapters discuss the main findings, limitations, future work, and conclusions.
+
+\cleardoublepage
