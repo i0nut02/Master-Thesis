@@ -45,7 +45,7 @@ The thesis focuses on the following challenges:
 \item mapping coarse search, fine search, candidate selection, and top-\(k\) processing onto Tensix cores;
 \item organizing queries and indexed vectors to exploit tile-oriented batch execution;
 \item reducing irregular memory accesses and unnecessary host--device communication;
-\item evaluating the resulting trade-off among recall, throughput, energy consumption, and infrastructure cost;
+\item evaluating the resulting trade-off among Recall@10, throughput, energy consumption, and infrastructure cost;
 \item identifying the main bottlenecks that limit the performance of the current implementation.
 \end{itemize}
 
@@ -58,7 +58,7 @@ This thesis is guided by the following research questions:
 
 \item Can an IVF-based ANN search pipeline be implemented efficiently using tile-oriented computation, explicit data movement, and distributed Tensix cores?
 
-\item What recall and throughput can the Tenstorrent implementation achieve compared with multicore CPU systems and an NVIDIA A100 GPU system?
+\item What Recall@10 and throughput can the Tenstorrent implementation achieve compared with multicore CPU systems and an NVIDIA A100 GPU system?
 
 \item How does the whole-system energy consumption of Tenstorrent compare with CPU- and GPU-based ANN implementations at approximately matched recall?
 
