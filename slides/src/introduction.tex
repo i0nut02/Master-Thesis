@@ -1,0 +1,29 @@
+\section{Introduction}
+
+\begin{frame}{Motivation}
+  \begin{itemize}
+    \item Vector search retrieves the items most similar to a query embedding: it is the retrieval step of RAG, recommendation, and semantic search
+    \item Exact search compares the query with every vector: too slow for large collections
+    \item Approximate nearest-neighbor (ANN) indexes trade a little recall for much higher speed
+    \item Today ANN search runs on CPUs and GPUs
+    \item \textbf{Tenstorrent} builds tile-based AI accelerators: can they also serve vector search, and at what performance and energy cost?
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Research Questions}
+  \begin{enumerate}
+    \item Which ANN index structure suits the Tenstorrent architecture and programming model?
+    \item Can an IVF-based pipeline be implemented efficiently with tiles, explicit data movement, and distributed Tensix cores?
+    \item What Recall@10 and throughput does it reach compared with multicore CPUs and an NVIDIA A100?
+    \item How does its energy compare at matched recall?
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{Contributions}
+  \begin{itemize}
+    \item Analysis of the main ANN index families for Tenstorrent $\Rightarrow$ IVF-Flat
+    \item First ANN implementation on Tenstorrent, on a Wormhole n150
+    \item Comparison with Faiss on 56/112 CPU cores and an A100 at matched Recall@10
+    \item Throughput, workload energy, and a stage-level analysis of the bottlenecks
+  \end{itemize}
+\end{frame}

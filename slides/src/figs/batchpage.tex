@@ -1,0 +1,35 @@
+\begin{tikzpicture}[font=\small]
+\node[draw,rounded corners,fill=blue!8,inner sep=7pt] (queries) {$
+Q_b=
+\begin{bmatrix}
+q_0^{\mathsf T}\\
+q_1^{\mathsf T}\\
+q_2^{\mathsf T}\\
+q_3^{\mathsf T}
+\end{bmatrix}_{4\times D_{\mathrm p}}
+$};
+\node[draw,rounded corners,fill=green!9,inner sep=7pt,
+      right=1.2cm of queries] (page) {$
+V_p=
+\begin{bmatrix}
+\vert&\vert&\vert&\vert\\[-2pt]
+v_0&v_1&v_2&v_3\\[-2pt]
+\vert&\vert&\vert&\vert
+\end{bmatrix}_{D_{\mathrm p}\times4}
+$};
+\node[draw,rounded corners,fill=orange!12,inner sep=7pt,
+      right=1.2cm of page] (scores) {$
+S_{b,p}=
+\begin{bmatrix}
+s_{00}&s_{01}&s_{02}&s_{03}\\
+s_{10}&s_{11}&s_{12}&s_{13}\\
+s_{20}&s_{21}&s_{22}&s_{23}\\
+s_{30}&s_{31}&s_{32}&s_{33}
+\end{bmatrix}
+$};
+\node at ($(queries.east)!0.5!(page.west)$) {$\times$};
+\node at ($(page.east)!0.5!(scores.west)$) {$=$};
+\node[below=3pt of queries,font=\scriptsize] {query batch};
+\node[below=3pt of page,font=\scriptsize] {candidate page};
+\node[below=3pt of scores,font=\scriptsize] {query--candidate scores};
+\end{tikzpicture}

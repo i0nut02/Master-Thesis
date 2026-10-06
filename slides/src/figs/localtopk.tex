@@ -1,0 +1,26 @@
+\begin{tikzpicture}[font=\scriptsize]
+\providecommand{\tilegrid}[4]{% x, y, fill, name
+  \foreach \i in {0,...,3}{\foreach \j in {0,...,3}{
+    \draw[fill=#3] (#1+\j*0.3,#2-\i*0.3) rectangle ++(0.3,0.3);}}
+  \coordinate (#4) at (#1+0.6,#2-0.45);}
+% current page, as computed
+\tilegrid{0}{0.2}{devc}{cs}\tilegrid{1.5}{0.2}{hostc}{ci}
+\node[font=\small] at (1.35,0.85) {current page};
+\node at (0.6,-1.15) {scores}; \node at (2.1,-1.15) {IDs};
+\node[font=\small\bfseries] at (1.35,-1.65) {rows = queries};
+\draw[darr] (3.1,-0.25) -- node[above,align=center]{transpose} (4.6,-0.25);
+% transposed current page and saved state
+\tilegrid{4.8}{0.2}{devc}{tcs}\tilegrid{6.3}{0.2}{hostc}{tci}
+\tilegrid{4.8}{2.0}{devc}{ts}\tilegrid{6.3}{2.0}{hostc}{ti}
+\foreach \q in {0,...,3}{\node at (4.95+\q*0.3,2.45) {\(q_{\q}\)};}
+\node[font=\small] at (6.15,2.85) {saved state (already transposed)};
+\node at (5.4,-1.15) {scores}; \node at (6.9,-1.15) {IDs};
+\node[font=\small\bfseries] at (6.15,-1.65) {columns = queries};
+\node[dbox,minimum height=1.4cm] (sort) at (10.4,0.65)
+  {\texttt{topk\_local\_sort}\\[2pt]sorts each column,\\same order for\\scores and IDs};
+\draw[darr] (7.8,0.65) -- (sort.west);
+\tilegrid{12.6}{1.1}{devc}{ns}\tilegrid{14.1}{1.1}{hostc}{ni}
+\node[align=center] at (13.7,-0.35) {best entries per query\\(scores + IDs)};
+\draw[darr] (sort.east) -- (12.5,0.65);
+\draw[darr,dashed] (13.7,1.5) -- (13.7,3.5) -| node[pos=0.25,above]{becomes the saved state for the next page} (6.15,3.1);
+\end{tikzpicture}

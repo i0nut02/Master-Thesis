@@ -1,0 +1,59 @@
+\section{Background}
+
+\begin{frame}{Approximate Nearest-Neighbor Search}
+  \begin{itemize}
+    \item Database of $n$ vectors in $\mathbb{R}^d$, query $q$: find the $k$ most similar vectors
+    \item Similarity: inner product on normalized vectors (cosine)
+    \item Quality measured by \textbf{Recall@10}: fraction of the true 10 nearest neighbors that are returned
+    \item Main index families: inverted files (IVF), graphs (HNSW, CAGRA), quantization (IVF-PQ, ScaNN)
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Inverted File Index (IVF)}
+  \begin{columns}
+    \column{0.5\textwidth}
+    \begin{itemize}
+      \item $k$-means splits the database into $N_{\mathrm{list}}$ cells
+      \item \textbf{Coarse search:} compare the query with all centroids
+      \item \textbf{Fine search:} scan only the $N_{\mathrm{probe}}$ closest lists
+      \item Larger $N_{\mathrm{probe}}$: higher recall, more work
+    \end{itemize}
+    \column{0.5\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{voronoi_cells.png}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Why Approximate: Missed Neighbors}
+  \centering
+  \includegraphics[height=0.68\textheight]{ivf_missed_vector.png}\\[1mm]
+  {\footnotesize A true neighbor in an unprobed cell is missed: $N_{\mathrm{probe}}$ trades recall for speed}
+\end{frame}
+
+\begin{frame}{Tenstorrent Wormhole n150}
+  \begin{columns}
+    \column{0.5\textwidth}
+    \begin{itemize}
+      \item Grid of Tensix cores connected by a network-on-chip (NoC)
+      \item Each core: five RISC-V cores, local L1 SRAM, matrix engine on $32\times32$ tiles
+      \item 12\,GB GDDR6 device DRAM, attached via PCIe
+      \item TT-Metalium: reader, compute, and writer kernels linked by circular buffers
+    \end{itemize}
+    \column{0.5\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{tensix.png}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Why IVF-Flat?}
+  \begin{itemize}
+    \item \textbf{Graphs} (HNSW, CAGRA): irregular, data-dependent traversal, poor fit for tiles
+    \item \textbf{Quantization} (IVF-PQ, ScaNN): codebook lookups map poorly onto the matrix engine
+    \item \textbf{IVF-Flat}: dense products between query tiles and contiguous lists
+    \begin{itemize}
+      \item regular, fixed-shape computation
+      \item predictable, streamable memory access
+      \item the irregular part (list selection) can be handled on the host
+    \end{itemize}
+  \end{itemize}
+\end{frame}

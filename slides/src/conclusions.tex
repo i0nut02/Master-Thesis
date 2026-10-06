@@ -1,0 +1,19 @@
+\section{Conclusions}
+
+\begin{frame}{Answers to the Research Questions}
+  \begin{enumerate}\small
+    \item \textbf{Index:} IVF-Flat fits the tile model best
+    \item \textbf{Implementation:} feasible, 95.4\% Recall@10 at 5,550 QPS; the batch union is the main inefficiency
+    \item \textbf{Performance:} A100 fastest (7.8--31.9$\times$); Tenstorrent overtakes the 56-core CPU at high recall
+    \item \textbf{Energy:} far below the CPUs, above the A100, dominated by the host
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{Future Work}
+  \begin{itemize}
+    \item \textbf{Group queries before batching:} first test at 512 lists, fine search $-57\%$ ($N_{\mathrm{probe}}=16$) and $-42\%$ ($N_{\mathrm{probe}}=32$)
+    \item Lighter top-$k$ update per page
+    \item Better load balancing across batches and workers
+    \item Index structures designed for the device
+  \end{itemize}
+\end{frame}

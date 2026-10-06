@@ -1,0 +1,23 @@
+\section{Methodology}
+
+\begin{frame}{Experimental Setup}
+  \begin{itemize}
+    \item Dataset: \texttt{glove-100-angular}, 1,183,514 vectors, 100 dimensions, 10,000 queries
+    \item \textbf{CPU:} Faiss IVF-SQ (FP16) on Leonardo, 56 and 112 cores
+    \item \textbf{GPU:} Faiss IVF-SQ (FP16) on an NVIDIA A100
+    \item \textbf{Tenstorrent:} IVF-Flat (FP16) on a Wormhole n150
+    \item Same trained centroids for all systems
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Matched Recall and Measurements}
+  \begin{itemize}
+    \item Grid of $(N_{\mathrm{list}},N_{\mathrm{probe}})$ per system; compared at matched Recall@10: \textbf{60\%, 78\%, 88\%, 95\%}
+    \item Throughput: median of 10 repetitions
+    \item Energy: complete 100,000-query workload, \textbf{including initialization}, median of 10 sessions
+    \begin{itemize}
+      \item host: RAPL package counters
+      \item accelerators: \texttt{nvidia-smi} (board) and \texttt{tt-smi} (chip) power, integrated over time
+    \end{itemize}
+  \end{itemize}
+\end{frame}

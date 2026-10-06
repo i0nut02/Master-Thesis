@@ -1,0 +1,139 @@
+\section{Design and Implementation}
+
+\begin{frame}{Overview}
+  \roadmap{0}
+  \slidefig[0.66]{map}
+\end{frame}
+
+\begin{frame}{Running Example}
+  \roadmap{0}
+  \centering\footnotesize
+  \begin{tabular}{lcc}
+    \toprule
+    & Example & Implementation \\
+    \midrule
+    Tile size & $4\times4$ & $32\times32$ \\
+    Queries per batch & 4 ($q_0$--$q_3$) & 32 \\
+    Inverted lists & 8 (A--H) & 512--2048 \\
+    Lists per query $N_{\mathrm{probe}}$ & 2 & 1--32 \\
+    Top-$k$ state & top-2 & top-32 \\
+    Fine-search workers & 3 (W1--W3) & 63 \\
+    Chunk limit & 2 pages & 128 pages \\
+    \bottomrule
+  \end{tabular}\\[2mm]
+  Selections: $q_0$\{A,\,C\}, $q_1$\{A,\,B\}, $q_2$\{C,\,E\}, $q_3$\{A,\,D\}
+\end{frame}
+
+\begin{frame}{Step 1: Tiled Data Layout}
+  \roadmap{1}
+  \slidefig[0.3]{layout}
+  \begin{itemize}\footnotesize
+    \item Lists stored as \textbf{pages} of 32 vectors, dimensions padded to multiples of 32 (100 $\to$ 128)
+    \item Each page has an identifier tile; padded slots carry a sentinel and are masked to $-10000$
+    \item Index uploaded once to device DRAM; packed buffers addressed by page offset
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Step 1: Query Batch $\times$ Page}
+  \roadmap{1}
+  \slidefig[0.32]{batchpage}
+  \begin{itemize}\footnotesize
+    \item A batch of 32 queries is the row operand, a page of 32 vectors the column operand
+    \item One tile product scores every query of the batch against every vector of the page
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Step 2: Coarse Search}
+  \roadmap{2}
+  \begin{columns}
+    \column{0.62\textwidth}
+    \slidefig[0.58]{coarse}
+    \column{0.38\textwidth}
+    \begin{itemize}\footnotesize
+      \item Regular, dense: runs on the device
+      \item Query tiles stay in L1, centroid blocks of 32 streamed from DRAM
+      \item Running top-32 per query, so $N_{\mathrm{probe}}\le32$
+      \item Example: E replaces D for $q_2$ in block 2
+    \end{itemize}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Step 3: Batch-Level List Union}
+  \roadmap{3}
+  \begin{itemize}
+    \item The host collects the lists selected by all queries of a batch into one set
+    \item[] \centering $\mathcal{U}_b=\bigcup_{r} \mathcal{P}_{b,r}$ \quad e.g.\ 8 selections $\to$ $\{$A,B,C,D,E$\}$
+    \item Why: a page costs one tile product whether 1 or 32 queries need it
+    \item Consequence: each query is also scored against the lists of the other queries
+    \item With queries in dataset order, batches share few lists: each query scans \textbf{12--32$\times$} the vectors of its own lists
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Step 4: Scheduling on 63 Workers}
+  \roadmap{4}
+  \begin{columns}
+    \column{0.58\textwidth}
+    \slidefig[0.55]{schedule}
+    \column{0.42\textwidth}
+    \begin{itemize}\footnotesize
+      \item Lists longer than 128 pages split into chunks
+      \item Weight = number of pages
+      \item LPT: longest task to the least-loaded worker
+      \item One description per worker in DRAM: (offset, page count) per task
+      \item Host cost: at most 3\% of search time
+    \end{itemize}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Step 5: Fine Search -- Data Movement}
+  \roadmap{5}
+  \slidefig[0.5]{datamovement}
+  \begin{itemize}\footnotesize
+    \item Reader (NCRISC) streams pages over the NoC, double-buffered
+    \item Compute (TRISC0--2) scores the page; writer (BRISC) stages results in DRAM
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Step 5: Fine Search -- One Page}
+  \roadmap{5}
+  \slidefig[0.36]{page}
+  \begin{itemize}\footnotesize
+    \item Multiply the query tiles by the page: one $32\times32$ score tile
+    \item Last page of a list: padded slots recognized by their sentinel ID and set to $-10000$
+    \item Scores merged into the running top-32 of each query
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Step 5: Fine Search -- Top-32 Update}
+  \roadmap{5}
+  \slidefig[0.5]{localtopk}
+  \begin{itemize}\footnotesize
+    \item Only the current page is transposed; the saved state is already kept transposed
+    \item \texttt{topk\_local\_sort} orders each query column and moves scores and IDs together
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Step 6: Hierarchical Top-$k$}
+  \roadmap{6}
+  \begin{columns}
+    \column{0.6\textwidth}
+    \slidefig[0.58]{staging}
+    \column{0.4\textwidth}
+    \begin{itemize}\footnotesize
+      \item Each worker writes its partial top-32 to its own DRAM slot
+      \item Completion semaphore on core $(0,0)$; ready semaphore back to each worker
+      \item Core $(0,0)$ merges all slots: \textbf{final top-32 on the device}
+      \item Host only reads it and keeps $k$
+    \end{itemize}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Step 7: Multi-Batch Execution}
+  \roadmap{7}
+  \slidefig[0.42]{multibatch}
+  \begin{itemize}\footnotesize
+    \item All batches of a workload run in one coarse and one fine invocation
+    \item Workers continue with the next batch; aggregation follows behind
+    \item Launch, synchronization, and host orchestration amortized over many batches
+  \end{itemize}
+\end{frame}

@@ -1,9 +1,7 @@
-\hypersetup{colorlinks=true, linkcolor=blue, citecolor=red}
-
 \chapter{Background}
 \label{chap:background}
 
-This chapter provides the background required for the rest of the thesis. It introduces the main families of algorithms used for approximate nearest-neighbor search, reviews GPU-specialized methods, and describes the Tenstorrent architecture and programming model. It then analyzes the suitability of each ANN index family for execution on Tenstorrent hardware, motivating the selection of IVF-Flat for the implementation developed in this thesis.
+This chapter provides the background required for the rest of the thesis. It introduces the main families of algorithms used for approximate nearest-neighbor search, reviews GPU-specialized methods, and describes the Tenstorrent architecture and programming model. It then reviews related work, analyzes the suitability of each ANN index family for execution on Tenstorrent hardware, motivating the selection of IVF-Flat for the implementation developed in this thesis.
 
 \section{Approximate Nearest-Neighbor Search}
 \label{sec:ann}
@@ -35,6 +33,7 @@ Exhaustive search is highly regular and can be implemented efficiently using mat
 ANN indexes reduce the amount of work by searching only a query-dependent subset of the dataset. They therefore trade exactness for lower latency and higher throughput. Search quality is commonly measured through recall. For a query \(\mathbf{q}\), Recall@\(k\) can be defined as
 \begin{equation}
 \operatorname{Recall@}k(\mathbf{q})=\frac{\left|\operatorname{ANN}_k(\mathbf{q})\cap\operatorname{NN}_k(\mathbf{q})\right|}{k},
+\label{eq:recall-at-k}
 \end{equation}
 where \(\operatorname{ANN}_k(\mathbf{q})\) is the approximate result and \(\operatorname{NN}_k(\mathbf{q})\) is the exact ground truth.
 
@@ -43,7 +42,7 @@ The objective of an ANN system is not simply to minimize the number of visited v
 \section{Inverted File Indexes}
 \label{sec:ivf-background}
 
-The inverted file index, usually referred to as IVF, is one of the most widely used index structures for large-scale vector search. It is implemented by systems such as Faiss and can be combined with compression techniques including product quantization \cite{faiss}.
+The inverted file index, usually referred to as IVF, is one of the most widely used index structures for large-scale vector search. It is implemented by systems such as Faiss and can be combined with compression techniques including product quantization \cite{faiss}. The idea of partitioning a collection into inverted lists and searching only the most promising ones originates in text retrieval and was carried over to visual search \cite{sivic_video_google}; its combination with product quantization for nearest-neighbor search was introduced by J\'egou et al.\ \cite{jegou_pq}.
 
 IVF partitions the vector space into regions through a coarse quantizer. The coarse quantizer is commonly trained using \(k\)-means clustering, producing a set of centroid vectors
 \begin{equation}
@@ -78,7 +77,7 @@ where \(P(\mathbf{q})\) is the set of lists selected for query \(\mathbf{q}\) an
 \newline
 The main IVF parameters are:
 \begin{itemize}
-\item \(N_{\mathrm{list}}\), the number of coarse clusters or inverted lists into which the dataset is partitioned.
+\item \(N_{\mathrm{list}}\), the number of coarse clusters or inverted lists into which the dataset is partitioned;
 \item \(N_{\mathrm{probe}}\), the number of inverted lists searched for each query.
 \end{itemize}
 
@@ -86,12 +85,12 @@ Increasing \(N_{\mathrm{probe}}\) generally increases recall because a larger po
 
 The main source of approximation in IVF is the partition-boundary problem. A vector may be very close to the query while belonging to a Voronoi cell whose centroid was not selected during coarse search. In this case, the vector is excluded from the candidate set before its exact distance from the query is computed.
 
-Figure~\ref{fig:ivf-missed-vector} shows a concrete example of this behavior. The dataset is partitioned into five Voronoi cells, and the query \(\mathbf{q}\) belongs to the red cell. The vectors labelled from \(\#1\) to \(\#5\) are the five exact nearest neighbors of the query. Four of these vectors belong to the selected red cell and are evaluated during fine search. However, vector \(\#2\) lies immediately across the boundary in the neighboring blue cell. Because that cell is not probed, vector \(\#2\) is not included in \(\mathcal{D}_{\mathrm{candidate}}(\mathbf{q})\), even though it belongs to the exact top-\(5\) result.
+Figure~\ref{fig:ivf-missed-vector} shows a concrete example of this behavior. The dataset is partitioned into five Voronoi cells, and the query \(\mathbf{q}\) belongs to the red cell. The vectors labeled from \(\#1\) to \(\#5\) are the five exact nearest neighbors of the query. Four of these vectors belong to the selected red cell and are evaluated during fine search. However, vector \(\#2\) lies immediately across the boundary in the neighboring blue cell. Because that cell is not probed, vector \(\#2\) is not included in \(\mathcal{D}_{\mathrm{candidate}}(\mathbf{q})\), even though it belongs to the exact top-\(5\) result.
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.95\textwidth]{./assets/ivf_missed_vector.png}
-\caption{Example of a missed nearest neighbor in IVF search. The vectors labelled from \(\#1\) to \(\#5\) form the exact top-\(5\) result. Vector \(\#2\) lies in an unprobed neighboring Voronoi cell and is therefore excluded from the approximate result, which retrieves four of the five exact nearest neighbors.}
+\caption{Example of a missed nearest neighbor in IVF search. The vectors labeled from \(\#1\) to \(\#5\) form the exact top-\(5\) result. Vector \(\#2\) lies in an unprobed neighboring Voronoi cell and is therefore excluded from the approximate result, which retrieves four of the five exact nearest neighbors.}
 \label{fig:ivf-missed-vector}
 \end{figure}
 
@@ -150,10 +149,10 @@ The maximum number of connections per vertex and the candidate-list size control
 \newline
 From an accelerator perspective, HNSW presents several challenges:
 \begin{itemize}
-\item neighbor addresses depend on the currently visited vertex.
-\item adjacency lists and vectors may be distributed across memory.
-\item the search frontier and result queue are updated dynamically.
-\item different queries follow different paths and terminate after different numbers of steps.
+\item neighbor addresses depend on the currently visited vertex;
+\item adjacency lists and vectors may be distributed across memory;
+\item the search frontier and result queue are updated dynamically;
+\item different queries follow different paths and terminate after different numbers of steps;
 \item visited-set management requires additional random accesses and synchronization.
 \end{itemize}
 
@@ -213,10 +212,10 @@ The GPU implementation presented by Johnson et al.\ in Faiss introduces a regist
 \newline
 The resulting search pipeline uses the GPU effectively because:
 \begin{itemize}
-\item distance calculations are independent and data parallel.
-\item the same kernel can process large batches of queries.
-\item candidate vectors can be read through coalesced or block-oriented memory accesses.
-\item selection is performed using warp-level cooperation.
+\item distance calculations are independent and data parallel;
+\item the same kernel can process large batches of queries;
+\item candidate vectors can be read through coalesced or block-oriented memory accesses;
+\item selection is performed using warp-level cooperation;
 \item intermediate results can remain in registers or shared memory.
 \end{itemize}
 
@@ -252,7 +251,11 @@ The approach used by CAGRA is highly relevant when considering graph search on T
 \section{Tenstorrent Architecture and Programming Model}
 \label{sec:tt-architecture}
 
-Tenstorrent processors are spatial many-core accelerators composed of a two-dimensional grid of Tensix cores connected through one or more Networks-on-Chip. Rather than relying primarily on hardware-managed caches and general-purpose threads, the programming model gives the developer explicit control over data placement, data movement, core assignment, and synchronization.
+Tenstorrent processors are spatial many-core accelerators whose Tensix cores
+form a two-dimensional grid connected through one or more Networks-on-Chip.
+Rather than relying primarily on hardware-managed caches and general-purpose
+threads, the programming model gives the developer explicit control over data
+placement, movement, core assignment, and synchronization.
 
 Figure~\ref{fig:tensix-core} shows the main components of a Tensix core. A core combines local L1 SRAM, RISC-V processors responsible for data movement and kernel control, and specialized compute engines. The data-movement processors issue transfers through the NoC, while the compute path includes a matrix engine for tile-oriented operations and a vector engine for element-wise and special-function operations. The local SRAM stores circular buffers, input and output tiles, intermediate values, runtime metadata, and other kernel state. Consequently, performance depends not only on arithmetic throughput but also on how effectively computation and data movement are pipelined through the limited local-memory capacity.
 
@@ -281,8 +284,8 @@ Most computation on a Tensix core is performed on tiles. The standard tile is a 
 \newline
 The relevant memory hierarchy includes:
 \begin{itemize}
-\item off-chip device DRAM, which provides the capacity required for large tensors and indexes.
-\item local L1 SRAM associated with each Tensix core, which provides lower-latency storage for tiles, intermediate values, and circular buffers.
+\item off-chip device DRAM, which provides the capacity required for large tensors and indexes;
+\item local L1 SRAM associated with each Tensix core, which provides lower-latency storage for tiles, intermediate values, and circular buffers;
 \item explicit transfers over the Network-on-Chip between DRAM interfaces and Tensix cores or among Tensix cores.
 \end{itemize}
 
@@ -290,8 +293,8 @@ Data in DRAM is not accessed through a transparent cache. Device kernels explici
 \newline
 A typical TT-Metalium program uses three kinds of kernels:
 \begin{itemize}
-\item a reader kernel, responsible for transferring input data into local buffers.
-\item a compute kernel, which operates on tiles using the Tensix compute engine.
+\item a reader kernel, responsible for transferring input data into local buffers;
+\item a compute kernel, which operates on tiles using the Tensix compute engine;
 \item a writer kernel, responsible for transferring results to their final location.
 \end{itemize}
 
@@ -299,15 +302,28 @@ These kernels communicate through circular buffers in local SRAM. Circular buffe
 \newline
 This execution model is particularly effective for workloads with:
 \begin{itemize}
-\item regular tile-based computation.
-\item statically partitionable work.
-\item predictable data movement.
-\item contiguous or block-oriented memory accesses.
-\item sufficient work per transferred tile.
+\item regular tile-based computation;
+\item statically partitionable work;
+\item predictable data movement;
+\item contiguous or block-oriented memory accesses;
+\item sufficient work per transferred tile;
 \item opportunities for batching and data reuse.
 \end{itemize}
 
 Conversely, workloads dominated by pointer chasing, fine-grained random access, dynamically sized data structures, and query-dependent control flow are more difficult to map efficiently. Such workloads may still be implementable, but often require transformations that increase the amount of work, memory traffic, or synchronization.
+
+\section{Related Work}
+\label{sec:related-work}
+
+\subsection{ANN Search on Specialized Accelerators}
+
+Beyond CPUs and GPUs, ANN search has been mapped to FPGAs, TPUs, and dedicated hardware. FANNS co-designs the parameters of an IVF-PQ index and an FPGA accelerator for a given dataset and recall target, reporting speed-ups of up to 23.0 times over FPGA baselines and 37.2 times over CPU baselines \cite{fanns}. TPU-KNN instead performs nearest-neighbor search on TPUs at close to peak FLOP/s: guided by a performance model that accounts for both memory and instruction bottlenecks, it replaces index traversal with dense matrix computation and outperforms GPU methods at similar recall \cite{tpu_knn}. ANNA proposes a specialized architecture for product-quantization-based ANN search \cite{anna}. TPU-KNN is the closest in spirit to this thesis: both target a matrix-oriented accelerator and trade additional arithmetic for regular, tile-friendly execution.
+
+\subsection{Applications of Tenstorrent Hardware}
+
+Published studies of Tenstorrent hardware beyond machine-learning inference have focused on dense numerical kernels. On the Grayskull e150, a Jacobi stencil reached performance similar to a Xeon Platinum CPU while using about five times less energy \cite{brown_grayskull_stencil}. On the Wormhole, a two-dimensional FFT ran slower than a 24-core Xeon Platinum CPU but consumed about 2.8 times less energy \cite{brown_wormhole_fft}, and a gravitational \(N\)-body simulation on a Wormhole n300 achieved more than a twofold speed-up and about twofold energy savings over an optimized CPU implementation \cite{almerol_wormhole_nbody}.
+
+These workloads have regular, data-independent access patterns. ANN search differs in that the data accessed by each query depends on a data-dependent list selection, list sizes are irregular, and results require a top-\(k\) selection rather than a dense output. To the best of our knowledge, no approximate nearest-neighbor search implementation for Tenstorrent hardware has been published, and this thesis presents the first.
 
 \section{Suitability of ANN Indexes for Tenstorrent}
 \label{sec:index-suitability}
@@ -316,12 +332,12 @@ The suitability of an ANN index for Tenstorrent depends on more than its algorit
 \newline
 The principal criteria considered in this thesis are:
 \begin{enumerate}
-\item regularity of the computation.
-\item spatial locality of the indexed vectors.
-\item predictability and granularity of DRAM transfers.
-\item ability to batch multiple queries.
-\item amount of query-dependent control flow.
-\item size and dynamism of intermediate data structures.
+\item regularity of the computation;
+\item spatial locality of the indexed vectors;
+\item predictability and granularity of DRAM transfers;
+\item ability to batch multiple queries;
+\item amount of query-dependent control flow;
+\item size and dynamism of intermediate data structures;
 \item possibility of statically distributing work across Tensix cores.
 \end{enumerate}
 
@@ -338,11 +354,11 @@ The implementation developed in this thesis does not treat each query--cluster p
 \newline
 The main difficulties are:
 \begin{itemize}
-\item inverted lists have different numbers of vectors.
-\item different queries may select overlapping or disjoint sets of lists.
-\item the amount of work increases with \(N_{\mathrm{probe}}\).
-\item workers may receive unequal candidate-set sizes.
-\item local candidate sets must be merged into a global top-\(k\).
+\item inverted lists have different numbers of vectors;
+\item different queries may select overlapping or disjoint sets of lists;
+\item the amount of work increases with \(N_{\mathrm{probe}}\);
+\item workers may receive unequal candidate-set sizes;
+\item local candidate sets must be merged into a global top-\(k\);
 \item cluster metadata and worker schedules must be generated and transferred efficiently.
 \end{itemize}
 
@@ -364,10 +380,10 @@ The neighbor vectors are not guaranteed to be contiguous in DRAM. Transferring c
 \newline
 Graph traversal also requires:
 \begin{itemize}
-\item a dynamic candidate queue ordered by distance.
-\item a bounded result set.
-\item a representation of the previously visited vertices.
-\item repeated termination checks.
+\item a dynamic candidate queue ordered by distance;
+\item a bounded result set;
+\item a representation of the previously visited vertices;
+\item repeated termination checks;
 \item synchronization when multiple workers cooperate on one query.
 \end{itemize}
 
@@ -388,10 +404,10 @@ Placing these structures in device DRAM would increase capacity but introduce ad
 \newline
 A Tenstorrent-oriented graph index could still be explored in future work, for example by combining:
 \begin{itemize}
-\item a fixed graph degree compatible with tile dimensions.
-\item batched expansion of several query frontiers.
-\item a compact probabilistic visited-state representation.
-\item graph reordering to improve spatial locality.
+\item a fixed graph degree compatible with tile dimensions;
+\item batched expansion of several query frontiers;
+\item a compact probabilistic visited-state representation;
+\item graph reordering to improve spatial locality;
 \item bounded iteration counts and fixed-capacity candidate queues.
 \end{itemize}
 
@@ -406,7 +422,7 @@ Such an implementation would therefore constitute a separate research project ra
 \subsection{IVF-PQ and Quantized Indexes}
 \label{subsec:quantized-tt-fit}
 
-Product quantization divides a vector into \(m\) sub-vectors and replaces each sub-vector with the identifier of its closest codeword. A database vector is therefore represented using a short sequence of codebook indices rather than its original coordinates. Figure~\ref{fig:ivf-pq} illustrates this process: the original vector is divided into independent subspaces, each sub-vector is mapped to a codeword from its corresponding codebook, and the resulting codeword identifiers form the compressed representation.
+Product quantization \cite{jegou_pq} divides a vector into \(m\) sub-vectors and replaces each sub-vector with the identifier of its closest codeword. A database vector is therefore represented using a short sequence of codebook indices rather than its original coordinates. Figure~\ref{fig:ivf-pq} illustrates this process: the original vector is divided into independent subspaces, each sub-vector is mapped to a codeword from its corresponding codebook, and the resulting codeword identifiers form the compressed representation.
 
 \begin{figure}[htbp]
 \centering
@@ -419,9 +435,9 @@ For a query, lookup tables containing the distance between each query sub-vector
 \newline
 IVF-PQ preserves the coarse partitioning of IVF and therefore retains many of its favorable properties:
 \begin{itemize}
-\item encoded vectors can be stored contiguously within each inverted list.
-\item many codes can be evaluated independently.
-\item the reduced representation lowers DRAM capacity and bandwidth requirements.
+\item encoded vectors can be stored contiguously within each inverted list;
+\item many codes can be evaluated independently;
+\item the reduced representation lowers DRAM capacity and bandwidth requirements;
 \item coarse search and cluster scheduling can reuse the IVF-Flat design.
 \end{itemize}
 
@@ -429,10 +445,10 @@ The difficulty is not that the original vector must be fetched for every candida
 \newline
 The main implementation challenges on Tenstorrent are:
 \begin{itemize}
-\item implementing efficient small-table lookups.
-\item decoding packed codeword identifiers.
-\item supporting integer and mixed-precision accumulation.
-\item arranging codebooks for efficient local reuse.
+\item implementing efficient small-table lookups;
+\item decoding packed codeword identifiers;
+\item supporting integer and mixed-precision accumulation;
+\item arranging codebooks for efficient local reuse;
 \item gathering original vectors if exact re-ranking is enabled.
 \end{itemize}
 
@@ -449,9 +465,9 @@ ScaNN combines partitioning, quantization, and re-ranking. Its anisotropic quant
 \newline
 A typical ScaNN-style search pipeline combines partition-based pruning, compressed candidate scoring, candidate selection, and optional exact re-ranking \cite{scann}:
 \begin{enumerate}
-\item partition-based pruning of the search space.
-\item approximate scoring of a comparatively large candidate set using highly compressed representations.
-\item selection of a sufficiently large set of promising candidates.
+\item partition-based pruning of the search space;
+\item approximate scoring of a comparatively large candidate set using highly compressed representations;
+\item selection of a sufficiently large set of promising candidates;
 \item re-ranking of those candidates using their original vectors to obtain the final top-\(k\) results.
 \end{enumerate}
 

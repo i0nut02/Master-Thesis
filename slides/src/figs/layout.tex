@@ -1,0 +1,30 @@
+\begin{tikzpicture}[x=3.3mm,y=3.3mm]
+\definecolor{lG}{HTML}{A9D6D9}\definecolor{lH}{HTML}{D9B8A9}
+\foreach \name/\valid/\slots/\col/\start in
+  {A/7/8/lA/0, B/3/4/lB/8, C/10/12/lC/12, D/4/4/lD/24, E/5/8/lE/28, F/2/4/lF/36, G/6/8/lG/40, H/3/4/lH/48}{
+  \foreach \i in {1,...,\slots}{
+    \pgfmathsetmacro{\xx}{\start+\i-1}
+    \ifnum\i>\valid
+      \draw[fill=padc] (\xx,0) rectangle ++(1,1);
+      \draw[fill=padc] (\xx,-1.4) rectangle ++(1,1);
+      \node[font=\tiny] at (\xx+0.5,-0.9) {\(\varnothing\)};
+    \else
+      \draw[fill=\col] (\xx,0) rectangle ++(1,1);
+      \draw[fill=\col!40] (\xx,-1.4) rectangle ++(1,1);
+    \fi
+  }
+  \node[font=\footnotesize\bfseries] at (\start+\slots/2,1.8) {\name};
+  \pgfmathtruncatemacro{\np}{\slots/4}
+  \foreach \p in {1,...,\np}{\draw[very thick] (\start+4*\p-4,-1.4) rectangle ++(4,2.4);}
+}
+\foreach \o in {0,...,12}{\node[font=\tiny,gray] at (4*\o+2,-2.0) {\o};}
+\node[anchor=east,font=\tiny,gray] at (-0.3,-2.0) {page offset};
+\node[anchor=east,font=\scriptsize] at (-0.3,0.5) {vectors};
+\node[anchor=east,font=\scriptsize] at (-0.3,-0.9) {IDs};
+\draw[decorate,decoration={brace,mirror,amplitude=4pt}] (0,-2.4) -- (4,-2.4)
+  node[midway,below=4pt,font=\scriptsize] {one page};
+\draw[decorate,decoration={brace,mirror,amplitude=4pt}] (12,-2.4) -- (20,-2.4)
+  node[midway,below=4pt,font=\scriptsize] {chunk 1 (2 pages)};
+\draw[decorate,decoration={brace,mirror,amplitude=4pt}] (20,-2.4) -- (24,-2.4)
+  node[midway,below=4pt,font=\scriptsize] {chunk 2};
+\end{tikzpicture}

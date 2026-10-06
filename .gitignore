@@ -18,3 +18,16 @@
 
 # Duplicate default build output; the published document is src/thesis.pdf
 /src/main.pdf
+
+# Beamer-generated files
+*.nav
+*.snm
+*.vrb
+
+# Python caches
+__pycache__/
+
+# Local scratch and working notes (not part of the thesis)
+/src/tmp/
+/THESIS_TODO.md
+/UNION_ANALYSIS_PROMPT.md

@@ -1,11 +1,9 @@
-\hypersetup{colorlinks=true, linkcolor=blue, citecolor=red}
-
 \chapter{Introduction}
 \label{chap:introduction}
 
 \section{Motivation}
 
-Modern artificial-intelligence systems increasingly rely on external retrieval components to access information that is not contained directly in a model's parameters. Retrieval-Augmented Generation, or RAG, is a common example: before generating an answer, the system retrieves documents or document fragments that are relevant to the input query and provides them as additional context to the language model.
+Modern artificial-intelligence systems increasingly rely on external retrieval components to access information that is not contained directly in a model's parameters. Retrieval-Augmented Generation, or RAG \cite{lewis_rag}, is a common example: before generating an answer, the system retrieves documents or document fragments that are relevant to the input query and provides them as additional context to the language model.
 
 The retrieval stage is commonly implemented using a vector database. Documents are transformed into a dataset of high-dimensional embedding vectors
 \begin{equation}
@@ -15,7 +13,7 @@ while an incoming query is encoded as a vector \(\mathbf{q}\in\mathbb{R}^{d}\) i
 
 At large scale, vector retrieval can become an important systems bottleneck. A production service may need to process large numbers of queries over datasets containing millions or billions of vectors. Exhaustively comparing every query with every stored vector provides exact results, but its cost grows linearly with the dataset size. Approximate nearest-neighbor indexes reduce this cost by examining only a subset of the indexed vectors, trading a limited amount of recall for higher throughput and lower latency.
 
-Most existing vector-search systems are optimized for conventional CPUs and GPUs. CPUs are effective for irregular graph traversal and branch-heavy algorithms, while GPUs provide high throughput for regular batched computations. However, both architectures may consume substantial power when serving large retrieval workloads. This motivates the investigation of alternative hardware architectures that can provide competitive search quality and performance with lower whole-system energy consumption.
+Most existing vector-search systems are optimized for conventional CPUs and GPUs. CPUs are effective for irregular graph traversal and branch-heavy algorithms, while GPUs provide high throughput for regular batched computations. However, both architectures may consume substantial power when serving large retrieval workloads. This motivates the investigation of alternative hardware architectures that can provide competitive search quality and performance with lower energy consumption under a clearly defined measurement boundary.
 
 Tenstorrent processors are spatial many-core accelerators designed primarily for machine-learning workloads. They consist of grids of programmable Tensix cores connected through Networks-on-Chip and rely on explicitly managed data movement and distributed local memory \cite{tenstorrent_metalium_architecture}. These characteristics make Tenstorrent promising for regular and highly parallel operations, but it is not immediately clear whether they are also suitable for approximate nearest-neighbor search.
 
@@ -45,7 +43,7 @@ The thesis focuses on the following challenges:
 \item mapping coarse search, fine search, candidate selection, and top-\(k\) processing onto Tensix cores;
 \item organizing queries and indexed vectors to exploit tile-oriented batch execution;
 \item reducing irregular memory accesses and unnecessary host--device communication;
-\item evaluating the resulting trade-off among Recall@10, throughput, energy consumption, and infrastructure cost;
+\item evaluating the resulting trade-off among Recall@10, throughput, and energy consumption;
 \item identifying the main bottlenecks that limit the performance of the current implementation.
 \end{itemize}
 
@@ -60,11 +58,10 @@ This thesis is guided by the following research questions:
 
 \item What Recall@10 and throughput can the Tenstorrent implementation achieve compared with multicore CPU systems and an NVIDIA A100 GPU system?
 
-\item How does the whole-system energy consumption of Tenstorrent compare with CPU- and GPU-based ANN implementations at approximately matched recall?
+\item How does recorded accelerator and host energy compare across Tenstorrent, CPU, and GPU ANN implementations at approximately matched recall, and what are the limits of the measurement boundary?
 
 \item Which stages of the Tenstorrent search pipeline dominate execution time, and which architectural or software limitations are responsible for the observed bottlenecks?
 
-\item Under a simplified hardware-acquisition and electricity-cost model, in which operating regions can Tenstorrent provide a cost advantage over conventional CPU and GPU systems?
 \end{enumerate}
 
 \section{Contributions}
@@ -74,13 +71,13 @@ The main contributions of this thesis are:
 \begin{enumerate}
 \item An analysis of the suitability of major ANN index families for the Tenstorrent architecture, including IVF, graph-based methods, CAGRA, IVF-PQ, and ScaNN.
 
-\item The design and implementation of an IVF-Flat search pipeline on Tenstorrent hardware, including coarse centroid search, cluster selection, distributed fine search, and result processing.
+\item The design and implementation of TTAISS (Tenstorrent AI Similarity Search), an IVF-Flat search pipeline on Tenstorrent hardware, including coarse centroid search, cluster selection, distributed fine search, and result processing. To the best of our knowledge, this is the first approximate nearest-neighbor search implementation for the Tenstorrent architecture.
 
 \item A Tenstorrent-specific execution strategy that organizes work around batches of queries and selected cluster sets rather than independent query--cluster tasks.
 
 \item A quality-normalized experimental comparison against two multicore CPU configurations and an NVIDIA A100 GPU system.
 
-\item A whole-system energy and electricity-cost analysis across several recall operating points.
+\item An analysis of recorded component energy across several recall operating points, with explicit attention to measurement boundaries.
 
 \item A stage-level decomposition of the Tenstorrent search path, showing the relative contribution of host preparation, host-to-device transfers, coarse search, fine search, and output processing.
 
@@ -89,6 +86,6 @@ The main contributions of this thesis are:
 
 \section{Thesis Organization}
 
-The remainder of this thesis is organized as follows. Chapter~\ref{chap:background} introduces approximate nearest-neighbor search, reviews the main index families, describes GPU-specialized approaches, and motivates the selection of IVF-Flat for Tenstorrent. The following chapter presents the system design and implementation, including data layout, coarse search, fine search, scheduling, and device-side execution. The evaluation chapter describes the experimental setup and compares the CPU, GPU, and Tenstorrent systems in terms of recall, throughput, energy efficiency, and infrastructure cost. It also presents the Tenstorrent stage decomposition and bottleneck analysis. The final chapters discuss the main findings, limitations, future work, and conclusions.
+The remainder of this thesis is organized as follows. Chapter~\ref{chap:background} introduces approximate nearest-neighbor search, reviews the main index families and GPU-specialized approaches, describes the Tenstorrent architecture, discusses related work on ANN accelerators and on Tenstorrent applications, and motivates the selection of IVF-Flat. Chapter~\ref{chap:design-implementation} presents the design and implementation, including data layout, coarse search, fine-search scheduling, and device-side execution. Chapter~\ref{chap:methodology} describes the experimental setup and metrics, and Chapter~\ref{chap:results} compares the CPU, GPU, and Tenstorrent systems in terms of recall, throughput, and energy, and analyzes the Tenstorrent search path. The final chapter answers the research questions and outlines future work.
 
 \cleardoublepage

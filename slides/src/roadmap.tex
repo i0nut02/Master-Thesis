@@ -1,0 +1,24 @@
+% Roadmap of the design steps; #1 = highlighted step (0 = none)
+\newcommand{\roadmap}[1]{%
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+\foreach \i/\name/\where in {1/Data layout/device, 2/Coarse search/device,
+   3/List union/host, 4/Scheduling/host, 5/Fine search/device,
+   6/Top-$k$ merge/device, 7/Multi-batch/device}{
+  \ifnum\i=#1
+    \node[draw=maincolor,fill=maincolor,text=white,font=\scriptsize\bfseries,
+          rounded corners=2pt,minimum width=1.72cm,minimum height=0.62cm,align=center]
+          (r\i) at (\i*1.95,0) {\name};
+  \else
+    \node[draw=gray!60,fill=gray!12,text=gray!70!black,
+          rounded corners=2pt,minimum width=1.72cm,minimum height=0.62cm,align=center]
+          (r\i) at (\i*1.95,0) {\name};
+  \fi
+  \node[font=\tiny,text=gray] at (\i*1.95,-0.48) {\where};
+}
+\foreach \i [evaluate=\i as \j using int(\i+1)] in {1,...,6}{
+  \draw[-{Latex[length=1.4mm]},gray!70] (r\i.east) -- (r\j.west);}
+\end{tikzpicture}
+\end{center}\vspace{-2mm}}
+% figure that fits the remaining space
+\newcommand{\slidefig}[2][0.62]{\begin{adjustbox}{max width=\linewidth,max height=#1\textheight,center}\input{src/figs/#2}\end{adjustbox}}

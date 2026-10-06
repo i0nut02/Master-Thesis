@@ -1,0 +1,20 @@
+\begin{tikzpicture}[font=\small]
+\node[hbox,minimum width=2.0cm,minimum height=1.2cm] (host) at (0,0.4) {Host\\memory};
+\node[mbox,minimum width=3.0cm,minimum height=4.8cm] (dram) at (4.2,0.4)
+  {Device DRAM\\[2pt]\scriptsize 12\,GB GDDR6,\\\scriptsize 6 controllers,\\\scriptsize 12 channels\\[4pt]\scriptsize index pages + IDs,\\\scriptsize queries, worker\\\scriptsize descriptions,\\\scriptsize partial results};
+\draw[darr,<->] (host) -- node[above,font=\scriptsize]{PCIe} (dram);
+\draw[rounded corners=3pt,fill=devc!35] (8.6,-0.45) rectangle (15.6,3.0);
+\node[anchor=north west,font=\small\bfseries] at (8.7,2.95) {worker core (\(\times\)63)};
+\node[dbox,minimum width=2.4cm] (rd) at (10.3,1.75) {reader\\\scriptsize NCRISC};
+\node[dbox,minimum width=2.8cm] (cp) at (13.8,1.75) {compute\\\scriptsize TRISC0--2: unpack,\\\scriptsize math, pack};
+\node[dbox,minimum width=2.4cm] (wr) at (10.3,0.45) {writer\\\scriptsize BRISC};
+\draw[darr] (rd) -- node[above,font=\scriptsize]{CBs} (cp);
+\draw[darr] (cp.south) |- (wr.east);
+\node[font=\scriptsize,anchor=west] at (8.7,-0.2) {L1: query tiles, 2 page + ID slots, top-32 state};
+\node[dbox,minimum width=7.0cm,minimum height=0.9cm] (agg) at (12.1,-1.55)
+  {\textbf{aggregation core} \((0,0)\)};
+\draw[darr] (5.7,1.75) -- node[above,font=\scriptsize]{pages over NoC} (rd.west);
+\draw[darr] (wr.west) -- node[above,font=\scriptsize]{partial top-32} (5.7,0.45);
+\draw[darr] (5.7,-1.3) -- node[above,font=\scriptsize]{gather} (agg.west|-0,-1.3);
+\draw[darr] (agg.west|-0,-1.8) -- node[below,font=\scriptsize]{final top-32} (5.7,-1.8);
+\end{tikzpicture}

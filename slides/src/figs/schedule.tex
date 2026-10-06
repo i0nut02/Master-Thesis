@@ -1,0 +1,24 @@
+\begin{tikzpicture}[font=\small]
+\node[hbox,align=left] (sel) at (0,0)
+  {\(q_0\): A, C\\ \(q_1\): A, B\\ \(q_2\): C, E\\ \(q_3\): A, D};
+\node[above=1mm of sel,font=\scriptsize] {8 selections};
+\node[hbox,align=left,right=10mm of sel] (uni)
+  {\(\mathcal U=\{\)A, B, C, D, E\(\}\)\\[2pt]
+   A: 2 pages, B: 1, C: 3,\\ D: 1, E: 2};
+\node[above=1mm of uni,font=\scriptsize] {union: 5 distinct lists};
+\draw[darr] (sel) -- node[above,font=\scriptsize]{dedup.} (uni);
+\node[hbox,align=left,right=10mm of uni] (tasks)
+  {sorted tasks:\\ A (2), C\(_1\) (2), E (2),\\ B (1), C\(_2\) (1), D (1)};
+\node[above=1mm of tasks,font=\scriptsize] {C split into 2 chunks};
+\draw[darr] (uni) -- (tasks);
+\begin{scope}[shift={($(tasks.south)+(-1.6,-0.9)$)},x=8mm,y=6mm]
+  \foreach \w/\a/\ac/\b/\bc [count=\i] in
+    {W1/A/lA/B/lB, W2/C\(_1\)/lC/C\(_2\)/lC, W3/E/lE/D/lD}{
+    \node[anchor=east,font=\small] at (-0.2,-\i+0.4) {\w};
+    \draw[fill=\ac] (0,-\i) rectangle node{\a} (2,-\i+0.8);
+    \draw[fill=\bc] (2,-\i) rectangle node{\b} (3,-\i+0.8);
+  }
+  \node[font=\scriptsize,anchor=west] at (3.2,-2) {3 pages each};
+\end{scope}
+\draw[darr] (tasks.south) -- ++(0,-0.6) node[right,font=\scriptsize]{LPT};
+\end{tikzpicture}

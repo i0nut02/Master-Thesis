@@ -1,0 +1,40 @@
+\documentclass{beamer}
+\usepackage{amsfonts,amsmath,oldgerm}
+\usepackage{tabularx, booktabs, multirow, siunitx}
+\usepackage{ragged2e}
+\justifying
+\usetheme{sintef}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds,decorations.pathreplacing}
+\usepackage{adjustbox}
+\input{src/figs/styles.tex}
+\input{src/roadmap.tex}
+
+\usefonttheme[onlymath]{serif}
+
+\titlebackground*{assets/background}
+
+\newcommand{\hrefcol}[2]{\textcolor{cyan}{\href{#1}{#2}}}
+
+% Figures: slide-specific images first, then the thesis figures
+\graphicspath{{images/}{../src/assets/}}
+
+\title{Approximate Nearest-Neighbor Search on the Tenstorrent Wormhole Architecture}
+\course{Master's Degree in Computer Science}
+\author{\href{mailto:Barbalata.2002688@studenti.uniroma1.it}{Barbalata Radu Ionut}}
+\IDnumber{2002688}
+\date{Academic Year 2025/2026}
+
+\begin{document}
+\maketitle
+
+\input{src/introduction.tex}
+\input{src/background.tex}
+\input{src/design.tex}
+\input{src/methodology.tex}
+\input{src/results.tex}
+\input{src/conclusions.tex}
+
+\backmatter[notitle]
+
+\end{document}

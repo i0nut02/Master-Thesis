@@ -1,0 +1,13 @@
+\begin{tikzpicture}[x=10mm,y=6mm,font=\scriptsize]
+\foreach \w/\y in {W1/0,W2/-1,W3/-2}{\node[anchor=east] at (-0.2,\y+0.4) {\w};}
+\node[anchor=east] at (-0.2,-3.6) {aggregation};
+\foreach \y/\a/\b/\c in {0/2.0/1.8/2.2, -1/2.3/1.7/1.9, -2/1.9/2.1/2.0}{
+  \draw[fill=gray!15] (0,\y) rectangle node{B1} (\a,\y+0.8);
+  \draw[fill=gray!35] (\a,\y) rectangle node{B2} (\a+\b,\y+0.8);
+  \draw[fill=gray!55] (\a+\b,\y) rectangle node{B3} (\a+\b+\c,\y+0.8);
+}
+\draw[fill=gray!15] (2.3,-4) rectangle node{B1} (3.0,-3.2);
+\draw[fill=gray!35] (4.0,-4) rectangle node{B2} (4.7,-3.2);
+\draw[fill=gray!55] (6.2,-4) rectangle node{B3} (6.9,-3.2);
+\draw[-{Latex},thin] (0,-4.6) -- (7.3,-4.6) node[right]{time};
+\end{tikzpicture}

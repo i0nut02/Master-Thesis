@@ -1,0 +1,12 @@
+\begin{tikzpicture}[font=\small,node distance=5mm]
+\node[dbox] (w1) {W1: top-2 from A, B};
+\node[dbox,below=of w1] (w2) {W2: top-2 from C};
+\node[dbox,below=of w2] (w3) {W3: top-2 from E, D};
+\node[dbox,right=14mm of w2,minimum height=1.4cm] (agg) {aggregation core\\merge \(3\times2\) candidates};
+\node[dbox,right=8mm of agg] (fin) {final top-2\\per query};
+\node[hbox,right=8mm of fin] (host2) {host reads,\\keeps \(k\)};
+\foreach \w in {w1,w2,w3}{\draw[darr] (\w.east) -- (agg.west);}
+\draw[darr] (agg) -- (fin);
+\draw[darr] (fin) -- (host2);
+\node[font=\scriptsize,below=1mm of agg,align=center] {waits on a semaphore until\\all workers have written};
+\end{tikzpicture}

@@ -1,0 +1,226 @@
+\chapter{Conclusions and Future Work}
+\label{chap:conclusions}
+
+This thesis presented, to the best of our knowledge, the first approximate
+nearest-neighbor search implementation for Tenstorrent hardware: an IVF-Flat
+pipeline on a Wormhole n150 that combines device-side coarse search, host-side
+scheduling of the lists selected by each 32-query batch, and distributed fine
+search with hierarchical top-\(k\) selection. It was evaluated on
+glove-100-angular against Faiss on two CPU configurations and an NVIDIA A100
+system, at matched Recall@10, in terms of throughput, workload energy, and the
+cost of each stage of the search path. This chapter answers the research
+questions, summarizes the limitations, and outlines future work.
+
+\section{Answers to the Research Questions}
+\label{sec:rq-answers}
+
+\paragraph{RQ1: Which ANN index is most suitable for Tenstorrent?}
+IVF-Flat. Its fine search reduces to dense multiplications between query tiles
+and contiguous blocks of database vectors, which map directly onto Tensix tile
+operations and explicit DRAM transfers, whereas graph-based indexes depend on
+pointer chasing and query-dependent control flow
+(Chapter~\ref{chap:background}). This is an argued choice rather than a
+measured comparison, since no other index was implemented. The implementation
+showed that the regular part of the search maps well onto the device, but also that the irregular parts of
+IVF, namely list selection, list sizes, and scheduling, remain the difficult
+part of the mapping: they were placed on the host and they surface as worker
+imbalance on the device.
+
+\paragraph{RQ2: Can IVF search be implemented efficiently on Tenstorrent?}
+It can be implemented, but not yet efficiently. The pipeline reaches 95.4\%
+Recall@10 and runs at 5,550~queries per second at that recall, and grouping
+queries into 32-query batches lets the fine search use full tiles. The same
+batching, however, makes every query in a batch scan the union of the lists
+selected by the whole batch. Because consecutive queries share almost no lists,
+each query is scored against 12 to 32 times as many vectors as its own lists
+contain, and against 81.7\% of the database at the 95\% operating point. This
+raises recall by up to 7.5 percentage points at equal parameters, but at high
+recall it turns IVF search into a nearly exhaustive scan. The union itself
+saves data movement, since each distinct list is fetched once per batch
+instead of once per query that requests it, but with queries in dataset order
+this saving is small. Inside the
+fine search, one page of candidates costs about 7~\(\mu\)s of compute, which is
+far more than its four tile multiplications, and in the profiled window compute
+waits for DRAM fetches for about 40\% of the time because the reader runs only
+about one page ahead.
+
+\paragraph{RQ3: What recall and throughput does Tenstorrent achieve?}
+The A100 is the fastest system at every recall level, by 31.9 times at 60\%
+recall and 7.8 times at 95\%. Tenstorrent is slower than both CPU
+configurations up to about 88\% recall; at the 60\% target this is largely
+due to a fixed cost of about 0.58~ms per batch that caps its throughput at low
+\(N_{\mathrm{probe}}\). Its throughput, however, declines more slowly with
+search depth: at 95\% recall it is 1.74 times faster than the 56-core CPU and
+on par with the 112-core CPU. These CPU comparisons hold against the evaluated
+Faiss grid, whose only point near 95\% recall uses 512 lists; Faiss
+configurations with more lists, which were not evaluated, could narrow or reverse them.
+
+\paragraph{RQ4: How does energy compare, and what are the limits of the
+measurement?}
+For a complete 100,000-query workload including initialization, the A100
+system uses the least energy at every recall target, 9.3--20.1~mJ per query.
+The Tenstorrent system uses 30.5--46.9~mJ per query, 2.3--3.8 times the A100
+value, but 53--79\% less than the CPU configurations, which use
+69--219~mJ. The Wormhole device itself draws only 24--34~W and accounts for
+11--18\% of the Tenstorrent system energy; the rest is drawn by its dual-socket
+host. The main limits of the measurement are that it includes initialization,
+so per-query values depend on workload length; that the device sensors differ,
+chip telemetry on Tenstorrent and board power on the A100; and that the three
+systems use different hosts.
+
+\paragraph{RQ5: Which stages dominate, and why?}
+Fine search accounts for 90--98\% of the Tenstorrent search time at
+\(N_{\mathrm{list}}=512\), the only list count for which the stages were
+timed; host preparation, transfers, coarse search, and
+output handling together take only 26--30~ms per 10,000 queries. Within fine
+search, batch transitions and the final aggregation overlap with the workers
+and are not on the critical path at these configurations; at low
+\(N_{\mathrm{probe}}\), however, the serial aggregation of 63 worker results
+per batch is a likely cause of the fixed per-batch floor. The time is instead spent in the per-list
+loop of each worker. With at most 21 floating-point operations per fetched
+byte, and only 0.7--1.7 useful ones, the search is memory-bound in the roofline
+sense and uses only 2\% of the peak arithmetic rate; its time is set by
+irregular DRAM fetch times with shallow buffering, which create pipeline
+bubbles, and by the work done on every page around the multiplication, most
+likely the top-\(k\) update. Batch completion is
+further set by the slowest worker, because tasks remain coarse: whole lists,
+or chunks of up to 128 pages for longer lists, which occur only with 512
+lists. In a schedule without chunking, which matches the timed runs at 1024
+and 2048 lists, the busiest worker holds a median of 1.3--4.2 times the mean
+load, the most at low \(N_{\mathrm{probe}}\), where fewer lists than workers
+are available. More than any of these effects, however, the batch union
+multiplies the number of pages that the workers must process.
+
+\paragraph{The energy hypothesis.}
+The motivation of this thesis was that an energy-efficient machine-learning
+accelerator might also provide lower-energy vector search. At the system level,
+this is not confirmed for the evaluated setup: the A100 system uses less energy
+at every recall target. The measurements do, however, locate the cause. The
+Wormhole device is frugal: at the 95\% target the chip uses 8.5~mJ per query,
+similar to the 10.7~mJ of the A100 board, while the system energy is dominated
+by the host and by the time spent in the search loop. Both can be reduced,
+by a lighter host and by shorter sessions, which motivates the future work
+below.
+
+\section{Limitations}
+\label{sec:conclusion-limitations}
+
+The implementation is limited by the platform and by its own design in four
+ways.
+
+\paragraph{Limited low-level primitives.} The low-level kernel (LLK) API of
+TT-Metalium offers little room to customize the operations that the search
+relies on. Ordering scores together with 32-bit identifiers is possible only
+through a specific top-\(k\) path, which in turn requires FP32 destination
+accumulation (Section~\ref{subsec:tiled-list-layout}). Other primitives, such
+as the merge of sorted results, support only 16-bit indices, which cannot
+identify the 1.18 million database vectors directly. The design therefore
+follows what the available primitives allow rather than what the algorithm
+would ideally use.
+
+\paragraph{Device memory.} The complete index must reside in the device DRAM
+of the Wormhole n150, 12~GB \cite{tenstorrent_wormhole_spec}. With vectors
+padded to 128 FP16 dimensions and one \(32\times32\) identifier tile per page,
+each database vector occupies 384~bytes, which bounds a single device to
+roughly 30 million vectors, far from billion-scale collections. Larger collections could in
+principle be swapped in and out of the device, as tiling does between DRAM and
+L1, but the lists would then cross the PCIe link, about 32~GB/s against
+288~GB/s for the device DRAM. Since a batch union covers a large part of the
+database, about 374~MB at \((512,32)\), swapping pays off only when batches
+touch few lists, for example after grouping similar queries, or when the most
+frequently used lists are kept on the device. Such out-of-core search is
+usually treated as a separate problem from in-memory search: systems such as
+DiskANN \cite{diskann} and SPANN \cite{spann} keep most of a billion-scale
+index on SSDs and are designed around that storage, and the NeurIPS'21
+billion-scale challenge evaluated in-memory and out-of-core solutions in
+separate tracks \cite{bigann_neurips21}. This thesis addresses the in-memory
+setting.
+
+Within the device, the L1 memory
+of each Tensix core, shared by the circular buffers, query tiles, and top-32
+states, in turn limits how deeply the reader can buffer ahead of compute.
+
+\paragraph{Load imbalance.} Tasks are coarse: lists are split only when they
+exceed 128 pages, so a worker that receives a large task can still set the
+completion time of the whole batch, and at low \(N_{\mathrm{probe}}\) fewer
+tasks than workers are available.
+
+\paragraph{Partial last pages.} The last page of an inverted list is usually
+only partially filled. Before the top-\(k\) update, its padded positions must
+receive a very low similarity, which the compute kernel achieves by scanning
+all \(32\times32=1{,}024\) entries of the page
+(Section~\ref{subsec:tiled-list-layout}). Every list in a batch union pays
+this cost once, so it weighs most when the lists are small, as with 2048
+lists.
+
+The platforms differ in host processors and hardware generations,
+so the comparison is between complete systems rather than processor
+architectures. Energy includes initialization and uses different device
+sensors on the two accelerators.
+
+\section{Future Work}
+\label{sec:future-work}
+
+The results point to one main direction: an index designed specifically for
+Tenstorrent, which is expected to raise its throughput more than refinements
+of the current design, because the IVF scan fetches far more data than each
+query needs and is limited by per-page work and irregular fetch latency rather
+than by arithmetic. Within the current IVF design, several further
+steps would help: fetching less data per batch, distributing it better over
+the workers, and making each page cheaper to process.
+
+\begin{enumerate}
+    \item \textbf{Design an index for the device.} The main direction, and
+    the one that could raise throughput on the device the most, is an index
+    designed specifically for the hardware, as CAGRA did for GPUs
+    \cite{cagra}. A graph-based index can reach high recall
+    while visiting far fewer vectors than an IVF scan, but, as discussed in
+    Section~\ref{sec:index-suitability}, a direct port of a CPU graph
+    algorithm would not suit Tenstorrent. A graph designed for the device
+    would take its constraints into account from the start: the limited L1
+    memory of each core, the tile granularity of computation, and the cost of
+    DRAM fetches shared by many cores.
+    \item \textbf{Group queries before batching.} In dataset order the queries
+    of a batch share almost no lists. Sorting them by their coarse selections
+    before batching makes each batch fetch fewer distinct lists: in a first
+    test at \(N_{\mathrm{list}}=512\), with 8 partitions, fine search drops by
+    57\% at \(N_{\mathrm{probe}}=16\) and by 42\% at \(N_{\mathrm{probe}}=32\),
+    for a host sorting cost of 100--180~ms per 10,000 queries. Its effect on
+    recall remains to be measured.
+    \item \textbf{Use only lightweight quantization.} Quantization reduces the
+    bytes fetched per vector, but only simple formats suit the device.
+    Product quantization and other codebook-based schemes need a lookup table
+    to convert each code back to a value, which does not map well onto tile
+    operations. Scalar formats that can be converted directly, such as 8-bit
+    or 4-bit values, are the practical options.
+    \item \textbf{Relieve the DRAM contention.} A high fetch volume is costly
+    on this device because the 63 workers share six DRAM controllers with
+    twelve GDDR6 channels \cite{tenstorrent_wormhole_spec}, so their readers
+    compete for the same channels, which is consistent with the slow fetches
+    observed in the single-list trace. Deeper buffering does not help: a
+    first test with an eight-page instead of a two-page reader prefetch made
+    fine search about 7\% slower, as the additional outstanding reads add to
+    the contention. Reducing the fetched volume is therefore the main remedy,
+    and repeating the page-level trace at larger \(N_{\mathrm{probe}}\)
+    would quantify the contention directly.
+    \item \textbf{Distribute the work in finer slices.} The implementation
+    already splits lists longer than 128 pages into chunks. Finer slices, down
+    to a few pages, would balance the load further across the workers, so that
+    no single large task sets the completion time of a batch. The single
+    aggregation core would then remain a bottleneck only at low
+    \(N_{\mathrm{probe}}\). A tree-shaped reduction is not expected to be an efficient
+    alternative: intermediate reduction nodes would need L1 space that the
+    fine search uses for its fetch buffers, and every core would have to act
+    both as a worker and as a reduction node.
+    \item \textbf{Scale beyond one chip and one dataset.} Datasets larger than
+    device memory, other embedding models, and multi-chip Tenstorrent systems
+    would test whether the approach holds at the scale of heavy retrieval
+    workloads.
+    \item \textbf{Integrate retrieval with inference.} The original motivation,
+    running retrieval on the same hardware as the language model in a RAG
+    pipeline, remains open. Co-locating both stages on one device would remove
+    a transfer between systems and is the setting in which a Tenstorrent
+    retrieval stage would be most valuable.
+\end{enumerate}
+
+\cleardoublepage

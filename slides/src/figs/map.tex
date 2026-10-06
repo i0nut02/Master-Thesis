@@ -1,0 +1,37 @@
+\begin{tikzpicture}[font=\small]
+\fill[hostc!40] (-0.4,0.9) rectangle (16.0,3.6);
+\fill[devc!45] (-0.4,-3.6) rectangle (16.0,0.5);
+\node[anchor=west,font=\bfseries\small] at (-0.3,3.3) {Host CPU};
+\node[anchor=west,font=\bfseries\small] at (-0.3,-3.35) {Tenstorrent device};
+\draw[dashed,gray] (-0.4,0.7) -- (16.0,0.7);
+\node[font=\scriptsize,gray,fill=white,inner sep=1pt] at (12.0,0.7) {PCIe};
+% host
+\node[hbox,minimum width=2.6cm,minimum height=1.1cm] (load) at (1.2,2.0)
+  {Build index,\\upload once};
+\node[hbox,minimum width=2.6cm,minimum height=1.1cm] (launch) at (4.4,2.0)
+  {Upload queries,\\launch coarse};
+\node[hbox,minimum width=3.6cm,minimum height=1.1cm] (sched) at (8.9,2.0)
+  {Select \(N_{\mathrm{probe}}\) lists,\\schedule them on workers};
+\node[hbox,minimum width=1.8cm,minimum height=1.1cm] (out) at (14.9,2.0)
+  {Read result,\\keep \(k\)};
+% device
+\node[mbox,minimum width=2.3cm,minimum height=1.1cm] (dram) at (1.2,-1.9)
+  {Index in DRAM\\(pages + IDs)};
+\node[dbox,minimum width=2.6cm,minimum height=1.1cm] (coarse) at (5.3,-1.9)
+  {Coarse\\search};
+\node[dbox,minimum width=3.0cm,minimum height=1.1cm] (fine) at (8.9,-1.9)
+  {Fine search on\\63 workers};
+\node[dbox,minimum width=2.4cm,minimum height=1.1cm] (agg) at (12.9,-1.9)
+  {Final top-32 on\\core \((0,0)\)};
+% arrows
+\draw[darr] (load) -- (dram);
+\draw[darr] (dram) -- node[above,font=\scriptsize]{centroids} (coarse);
+\draw[darr] (4.6,1.45) -- node[pos=0.5,left,font=\scriptsize]{queries} (4.6,-1.35);
+\draw[darr] (6.0,-1.35) -- node[pos=0.5,right,font=\scriptsize,align=left]{top-32 lists\\per query} (6.0,0.0) -| (7.6,1.45);
+\draw[darr] (sched.south) -- node[pos=0.55,right,font=\scriptsize,align=left]{list tasks\\per worker} (fine.north);
+\draw[darr] (dram.south) -- (1.2,-3.0) -| node[pos=0.25,below,font=\scriptsize]{pages of the selected lists} (8.9,-2.45);
+\draw[darr] (fine) -- node[above,font=\scriptsize,align=center]{partial\\top-32} (agg);
+\draw[darr] (agg.north) |- node[pos=0.25,right,font=\scriptsize]{final top-32} (out.west);
+\node[font=\scriptsize,anchor=east] at (15.9,-3.3)
+  {All batches of a workload: one invocation};
+\end{tikzpicture}

@@ -1,0 +1,70 @@
+\section{Results}
+
+\begin{frame}{Throughput vs.\ Recall}
+  \centering
+  \includegraphics[height=0.78\textheight]{qps_vs_recall.pdf}
+\end{frame}
+
+\begin{frame}{Throughput at Matched Recall}
+  \centering\footnotesize
+  \begin{tabular}{lrrrrrr}
+    \toprule
+    & \multicolumn{4}{c}{Median QPS} & \multicolumn{2}{c}{Ratio to TT} \\
+    \cmidrule(lr){2-5}\cmidrule(lr){6-7}
+    Target & CPU 56 & CPU 112 & A100 & TT & CPU 56 & A100 \\
+    \midrule
+    60\% & 151,858 & 266,184 & 1,583,712 & 49,720 & 3.05 & 31.85 \\
+    78\% & 43,864 & 80,075 & 544,703 & 21,907 & 2.00 & 24.86 \\
+    88\% & 11,466 & 22,079 & 160,799 & 10,762 & 1.07 & 14.94 \\
+    95\% & 3,190 & 5,822 & 43,271 & 5,550 & \textbf{0.57} & 7.80 \\
+    \bottomrule
+  \end{tabular}\\[3mm]
+  \normalsize
+  A100 always fastest; Tenstorrent declines more slowly and is \textbf{1.74$\times$} the 56-core CPU at 95\%
+\end{frame}
+
+\begin{frame}{Effect of the Batch Union}
+  \centering
+  \includegraphics[height=0.66\textheight]{union_scanned_fraction.png}\\[1mm]
+  {\footnotesize Each query scans 12--32$\times$ the vectors of its own lists}
+\end{frame}
+
+\begin{frame}{Where the Time Goes}
+  \begin{columns}
+    \column{0.5\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{memcopy_cost_nlist512.png}
+    \column{0.5\textwidth}
+    \begin{itemize}\footnotesize
+      \item $N_{\mathrm{list}}=512$, per 10,000 queries
+      \item Fine search: \textbf{90--98\%} of the search time
+      \item Host steps and coarse search: under 30\,ms
+      \item Memory-bound: about 21 operations per byte vs.\ a balance point of 257
+    \end{itemize}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Device Timeline}
+  \centering
+  \includegraphics[width=\linewidth,height=0.62\textheight,keepaspectratio]{fine_pipeline_horizontal.png}\\[1mm]
+  {\footnotesize Worker imbalance sets batch completion; the aggregation core follows the slowest worker}
+\end{frame}
+
+\begin{frame}{Workload Energy}
+  \begin{columns}
+    \column{0.58\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{energy_per_query_recall.png}
+    \column{0.42\textwidth}
+    \begin{itemize}\footnotesize
+      \item A100 system: lowest energy at every target
+      \item Tenstorrent system: \textbf{53--79\% less} than the CPUs, 2.3--3.8$\times$ the A100
+      \item The Wormhole chip is only \textbf{11--18\%} of its system energy: the host dominates
+    \end{itemize}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Throughput vs.\ Energy}
+  \centering
+  \includegraphics[height=0.78\textheight]{session_throughput_vs_energy.pdf}
+\end{frame}

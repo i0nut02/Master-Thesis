@@ -1,23 +1,438 @@
-\hypersetup{colorlinks=true, linkcolor=blue, citecolor=red}
+\chapter{Experimental Methodology}
+\label{chap:methodology}
 
-\chapter{Experiments Methodology}
+This chapter describes how the two host-CPU configurations, the NVIDIA A100
+system, and the Tenstorrent implementation are compared in terms of
+throughput, search quality, and energy. Because the Tenstorrent implementation
+described in Chapter~\ref{chap:design-implementation} does not associate
+\(N_{\mathrm{probe}}\) with the same candidate set as conventional per-query IVF
+search, cross-platform comparisons are made at matched measured recall rather
+than at matched index parameters.
+
 \section{Evaluation Goals}
+\label{sec:evaluation-goals}
+
+The experiments address the following evaluation goals:
+
+\begin{enumerate}
+    \item compare throughput as a function of measured Recall@10 rather than at
+    one isolated search setting;
+    \item determine how \(N_{\mathrm{list}}\) and \(N_{\mathrm{probe}}\)
+    affect the trade-off between throughput and recall;
+    \item identify the dominant portions of the Tenstorrent search path and
+    inspect overlap and imbalance within its fine-search program;
+    \item compare the energy of a complete query workload at approximately
+    matched recall.
+\end{enumerate}
+
+A higher-throughput operating point at lower recall is never treated as
+preferable to a slower point at higher recall unless the quality difference is
+made explicit.
 
 \section{Hardware and Software Configuration}
-Specify HW components used and clusters
+\label{sec:experimental-platforms}
+
+Table~\ref{tab:experimental-platforms} summarizes the four evaluated system
+configurations. The CPU and GPU baselines use Faiss
+\texttt{IndexIVFScalarQuantizer} with \texttt{QT\_fp16} storage \cite{faiss},
+while the Tenstorrent system uses the custom \texttt{ann\_ivf\_dram\_args}
+program presented in Chapter~\ref{chap:design-implementation}, implemented
+with TT-Metalium \cite{tenstorrent_metalium_architecture}. Both therefore store
+full-dimensional database vectors in FP16. The CPU and GPU runs used nodes of the Leonardo
+cluster \cite{leonardo}, and the Tenstorrent runs used \texttt{node117} of the Computer Science
+Department cluster of Sapienza University.
+
+\begin{table}[htbp]
+\centering
+\caption{Evaluated ANN search configurations. Accelerator configurations
+include the host required to execute and orchestrate the search.}
+\label{tab:experimental-platforms}
+\small
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\textwidth}{l X X}
+\toprule
+Configuration & Evaluated hardware & Allocation and implementation \\
+\midrule
+CPU (56 cores) & Intel Xeon Platinum 8480+ node with 112 physical cores & 56 physical cores, Faiss IVF-SQ (FP16) \\
+CPU (112 cores) & Intel Xeon Platinum 8480+ node with 112 physical cores & 112 physical cores, Faiss IVF-SQ (FP16) \\
+GPU (A100) + CPU & NVIDIA A100-SXM 64 GB; Intel Xeon Platinum 8358 host & One GPU and one allocated host core, Faiss GPU IVF-SQ (FP16) \\
+TT (Wormhole n150) + CPU & Single-chip Wormhole n150; AMD EPYC 7301 host & Custom TT-Metalium IVF with FP16 lists, host-side list selection and scheduling \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The CPU node exposes 112 physical cores in eight NUMA domains, with one
+hardware thread per core. In the 56-core configuration, Slurm exposed 56 CPU
+identifiers and Faiss reported the same number of execution threads. All CPU
+and GPU energy sessions ran on nodes allocated exclusively, so no other job
+shared the node during a measurement. The GPU node
+combines NVIDIA A100-SXM 64 GB accelerators, with a power limit of
+550~W as reported by \texttt{nvidia-smi}, with a 32-core Intel Xeon Platinum
+8358 host in two NUMA domains. The CPU and GPU baselines used the same
+Python~3.11.7 environment with Faiss~1.14.1 and GCC~12.2.0, and the GPU runs
+additionally used CUDA~12.2 and NVIDIA driver 535.274.02. The Tenstorrent host
+reports 64 online logical CPUs with two hardware threads per core, eight NUMA
+domains, and 251~GiB of memory, and the experiments used TT-SMI~3.0.38 and
+TT-Metalium~v0.66.0. The host processors differ considerably in their rated
+thermal design power (TDP): each Xeon Platinum 8480+ is rated at 350~W, about
+700~W for the dual-socket CPU node, the single Xeon Platinum 8358 of the GPU
+node at 250~W, and each EPYC 7301 at 155--170~W, about 310--340~W for the
+dual-socket Tenstorrent host.
+
+The accelerators are not evaluated as stand-alone devices, because data
+preparation, invocation, synchronization, and result handling all require host
+work. The A100 variant is stated explicitly because PCIe and SXM models differ
+in memory and power characteristics \cite{nvidia_a100_spec}; the Wormhole n150
+follows Tenstorrent's board specifications \cite{tenstorrent_wormhole_spec}.
 
 \section{Dataset and Index Parameters}
-Explicit parameters passed and explain well also based on the job file
+\label{sec:dataset-index-parameters}
 
-\section{Recall and Performance Metrics}
+All systems search the ANN-Benchmarks \texttt{glove-100-angular} dataset
+\cite{ann_benchmarks,ann_benchmarks_datasets}, built from the 100-dimensional
+Stanford GloVe Twitter vectors \cite{pennington_glove} with a fixed train/test
+split. It contains 1,183,514 database vectors and 10,000 test queries, together
+with the 100 exact nearest neighbors of every query under angular distance.
+Database vectors, centroids, and queries are normalized so that angular
+similarity reduces to an inner product.
+
+For each \(N_{\mathrm{list}}\), centroids are trained once with Faiss
+\(k\)-means on the training split and saved to file. Faiss's default
+settings are used, which sample at most 256 training vectors per centroid. Every implementation loads
+the same centroid matrix and assigns the database vectors to inverted lists
+itself, so clustering quality is not an experimental variable. On Tenstorrent,
+vectors, queries, centroids, and score tiles use FP16, identifiers use
+\texttt{UInt32}, and FP32 destination accumulation is enabled because the
+top-\(k\) path requires it (Section~\ref{subsec:tiled-list-layout}). The
+compute kernels use the default TT-Metalium math fidelity, HiFi4. Because
+the multiplier of the Tensix matrix engine is narrower than an FP16 mantissa,
+each product is computed in one to four passes over parts of the mantissas:
+the lower fidelities, LoFi to HiFi3, use fewer passes and drop the least
+significant bits to run faster, whereas HiFi4 uses all four and multiplies the
+complete mantissas. The similarity scores are therefore computed at the full
+precision of the FP16 inputs, which matters in nearest-neighbor search, where
+close candidates can differ only in the last bits of their scores.
+
+All four configurations are evaluated on the grid
+\begin{equation}
+N_{\mathrm{list}}\in\{512,1024,2048\},
+\qquad
+N_{\mathrm{probe}}\in\{1,2,4,8,16,32\}.
+\label{eq:parameter-grid}
+\end{equation}
+The Faiss CPU and GPU runs add \((N_{\mathrm{list}},N_{\mathrm{probe}})=(512,64)\)
+to reach the recall of Tenstorrent at \((512,32)\), and Tenstorrent adds
+\((2048,12)\) as a recall-matching point for the energy comparison. Because the
+Tenstorrent implementation maintains top-32 states, it supports
+\(N_{\mathrm{probe}}\leq32\) and \(k\leq32\). All quality results use
+\(k=10\), matching the public ANN-Benchmarks configuration for this dataset
+\cite{ann_benchmarks,ann_benchmarks_datasets}.
+
+Changing \(N_{\mathrm{list}}\) affects both IVF stages: more lists increase the
+coarse centroid scan and reduce the mean inverted-list size
+\begin{equation}
+\overline{L}=\frac{N}{N_{\mathrm{list}}},
+\label{eq:mean-list-size}
+\end{equation}
+which falls by a factor of four from \(N_{\mathrm{list}}=512\) to 2048, although
+the work for a given query still depends on the non-uniform sizes of the lists
+actually selected.
+
+For Faiss, \(N_{\mathrm{probe}}\) is the number of lists searched for each
+query. Tenstorrent instead searches, for every query in a batch of up to 32, the
+union of the lists selected by all queries in that batch
+(Equation~\ref{eq:batch-union}). A query can therefore be scored against lists
+selected by other queries, so equal \(N_{\mathrm{probe}}\) values do not imply
+equal candidate sets or recall.
+
+\section{Recall, Throughput, and Matching}
+\label{sec:evaluation-metrics}
+
+Recall@\(k\) follows Equation~\ref{eq:recall-at-k} and is reported as the mean
+over the 10,000 queries; throughout the evaluation, ``recall'' means Recall@10.
+Recall is computed in separate untimed quality runs, so ground-truth
+comparison never inflates search time or energy.
+
+The principal performance metric is queries per second (QPS). If repetition
+\(r\) of \(Q_{\mathrm{rep}}=10{,}000\) queries takes \(t_r\), then
+\begin{equation}
+\operatorname{QPS}_r=\frac{Q_{\mathrm{rep}}}{t_r},
+\qquad
+\operatorname{QPS}_{\mathrm{reported}}
+=\operatorname{median}_{r=1,\ldots,10}\left(\operatorname{QPS}_r\right).
+\label{eq:median-qps}
+\end{equation}
+
+CPU and GPU results can be compared at common
+\((N_{\mathrm{list}},N_{\mathrm{probe}})\), whereas comparisons involving
+Tenstorrent use measured recall. The energy comparison uses four operating
+points, grouped around nominal targets of 60\%, 78\%, 88\%, and 95\%
+(Table~\ref{tab:recall-matched-points}); these labels denote approximate
+quality matching, not uncertainty intervals. The Faiss configurations are
+shared by the CPU and GPU. Because both use the same centroids and the same
+per-query list selection, their recall is almost identical: it differs by at
+most 0.01 percentage points at these four points and by at most 0.04 across
+the whole grid, that is, by at most about 10 and 40 of the 100,000 true
+neighbors of the 10,000 queries. The remaining difference arises because the
+two implementations compute distances with a different order of
+floating-point operations and select the best candidates with different
+algorithms, so near-ties between centroids or candidates are occasionally
+resolved differently. The
+largest mismatch is at the 60\% target, where Tenstorrent is 1.78 percentage
+points above Faiss, because it was the closest Tenstorrent configuration available.
+
+\begin{table}[htbp]
+\centering
+\caption{Operating points selected for the recall-matched comparisons, written
+as \((N_{\mathrm{list}},N_{\mathrm{probe}})\). Faiss recall is given for the
+CPU and GPU runs respectively.}
+\label{tab:recall-matched-points}
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{lrrrr}
+\toprule
+Target & Faiss config. & Faiss Recall@10 (CPU / GPU) & TT config. & TT Recall@10 \\
+\midrule
+60\% & \((2048,4)\)  & 60.46 / 60.47\% & \((2048,4)\)  & 62.24\% \\
+78\% & \((2048,16)\) & 78.33 / 78.33\% & \((2048,12)\) & 79.16\% \\
+88\% & \((1024,32)\) & 88.49 / 88.49\% & \((1024,16)\) & 88.03\% \\
+95\% & \((512,64)\)  & 95.54 / 95.53\% & \((512,32)\)  & 95.37\% \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{Benchmark Procedure}
+\label{sec:benchmark-procedure}
+
+\paragraph{Throughput runs.}
+Each configuration executes ten timed repetitions of 10,000 queries within one
+process. For Faiss, the index is initialized once and the ten
+\texttt{index.search} calls reuse the same index, query matrix, and, on the GPU, the same
+CUDA context; each call receives all 10,000 queries at once. The Faiss runs use no dedicated warm-up call, but the per-run
+values show no systematic first-repetition slowdown, and the median is
+insensitive to a single outlier. The Tenstorrent stage and device-profiler
+experiments include a preceding warm-up invocation, which is excluded from the
+reported medians and trace. Search timing excludes index construction and the
+one-time index upload, but includes query-dependent preparation, execution,
+synchronization, and final result transfer
+(Section~\ref{sec:tt-stage-method}).
+
+On Tenstorrent, each 10,000-query repetition is split into
+\begin{equation}
+B_{10k}=\left\lceil\frac{10{,}000}{32}\right\rceil=313
+\label{eq:tt-batches-per-repetition}
+\end{equation}
+internal batches of at most 32 queries; the last batch holds 16 valid queries
+and 16 padded rows, which generate no fine-search tasks. Queries keep their
+dataset order and are grouped consecutively without shuffling, so the batch
+unions are reproducible; sensitivity to other groupings is not evaluated.
+
+Run-to-run stability is checked with the relative standard deviation
+\begin{equation}
+\operatorname{RSD}_{\mathrm{QPS}}
+=100\,\frac{s_{\mathrm{QPS}}}{\overline{\operatorname{QPS}}},
+\label{eq:qps-rsd}
+\end{equation}
+where \(s_{\mathrm{QPS}}\) and \(\overline{\operatorname{QPS}}\) are the sample
+standard deviation and mean of the ten repetitions.
+
+\paragraph{Energy sessions.}
+Energy is measured on a complete workload rather than on the search calls
+alone. One session starts a new process, loads the dataset and the saved
+centroids, assigns the database vectors to inverted lists, transfers the index
+to the accelerator where applicable, and then executes ten repetitions of
+10,000 queries,
+\begin{equation}
+Q_{\mathrm{run}}=10\times10{,}000=100{,}000
+\label{eq:queries-per-run}
+\end{equation}
+searches in total, before terminating. \(k\)-means training and recall
+evaluation are excluded. Each operating point is measured in ten independent
+sessions, and the reported energy is the median across them. The
+spread across sessions is reported as the interquartile range and as the RSD,
+defined as in Equation~\ref{eq:qps-rsd} with session energy in place of QPS.
+Session time is likewise the median over the ten sessions, and average power
+is the median energy divided by the median session time. On the CPU node and
+on the Tenstorrent host, the RAPL counters of both sockets are summed.
+
+This workload boundary deliberately charges initialization to the query
+workload: it represents the cost of answering 100,000 queries starting from a
+cold process. Platforms whose search is fast relative to their initialization
+therefore spend most of the session outside the search calls.
+Section~\ref{sec:energy-results} reports this share explicitly.
+
+\section{Tenstorrent Stage and Device Profiling}
+\label{sec:tt-stage-method}
+
+The Tenstorrent search path is partitioned into six disjoint host-observed
+intervals, all measured with \texttt{std::chrono::steady\_clock} over ten
+repetitions of 10,000 queries after one warm-up invocation, and reported as
+per-stage medians:
+\begin{equation}
+\begin{aligned}
+T_{\mathrm{search}}={}&T_{\mathrm{H2D}}
++T_{\mathrm{CPU,coarse}}
++T_{\mathrm{TT,coarse}}\\
+&+T_{\mathrm{CPU,fine}}
++T_{\mathrm{TT,fine}}
++T_{\mathrm{CPU,output}}.
+\end{aligned}
+\label{eq:tt-stage-sum-method}
+\end{equation}
+
+\begin{itemize}
+    \item \(T_{\mathrm{H2D}}\): blocking transfer of query and fine-worker
+    configuration data to the device, excluding the one-time index upload.
+    \item \(T_{\mathrm{CPU,coarse}}\): host query preparation, buffer and
+    program setup, and coarse-search runtime configuration.
+    \item \(T_{\mathrm{TT,coarse}}\): coarse-workload enqueue through
+    \texttt{distributed::Finish()}.
+    \item \(T_{\mathrm{CPU,fine}}\): coarse-result handling, batch-level
+    list-union construction, worker scheduling, and fine-program configuration.
+    \item \(T_{\mathrm{TT,fine}}\): fine-workload enqueue through completion,
+    including worker execution and final device-side sorting.
+    \item \(T_{\mathrm{CPU,output}}\): final device-to-host transfers,
+    untilization, and construction of the returned scores and identifiers.
+\end{itemize}
+
+The two TT intervals include device compute, DRAM and NoC traffic, and
+synchronization, so they describe complete accelerator stages rather than
+isolated compute or memory costs.
+
+To relate fine-search cost to the data scanned, a separate untimed run logs,
+for every internal batch and each of the 19 Tenstorrent configurations, the
+lists in the batch union \(\mathcal{U}_b\), their pages, and the pages assigned
+to each of the 63 workers. It uses the lists selected by the device coarse
+search, and one repetition of 10,000 queries suffices because the batching is
+deterministic; a repeated run at \((512,8)\) produced identical unions. From
+this log, the scanned fraction is the number of vectors in the union divided
+by the 1,183,514 database vectors, and it is compared with the vectors in the
+query's own \(N_{\mathrm{probe}}\) lists, which is what Faiss scans. Worker
+imbalance is the largest per-worker page load of a batch divided by the mean
+over all 63 workers. The log treats every list as a single task, whereas the
+timed runs split lists longer than 128 pages into chunks, which occurs only
+with 512 lists
+(Section~\ref{subsec:greedy-work-distribution}), so its imbalance values are
+upper bounds for the timed runs.
+
+Two device-profiler captures, both taken after the warm-up, examine the fine
+search. The profiler reports device coordinates: profiler core \((1,1)\) is
+program-logical core \((0,0)\), reserved for final aggregation, and profiler
+cores \((1,2)\) to \((1,4)\) are three consecutive fine-search workers. The
+first capture, at \((N_{\mathrm{list}},N_{\mathrm{probe}})=(512,8)\), shows
+the last three batches of the measured invocation, with every RISC processor
+of these four cores on a separate row; each worker zone covers one list task. The second, at \((512,1)\), zooms into 16 consecutive
+pages of a single list on one worker, with reader zones for the query fetch
+and each page's DRAM fetch, and compute zones for each page. Cycle counts are
+shifted to a common origin,
+\begin{equation}
+C_{\mathrm{relative}}=C-C_0,
+\label{eq:relative-device-cycles}
+\end{equation}
+where \(C_0\) is the earliest displayed timestamp, and converted to
+microseconds at the device frequency of about 1~GHz.
+Because reader, compute, and writer kernels communicate through circular
+buffers, their zones can include backpressure, input waits, and semaphore
+synchronization. The trace is therefore used to study overlap and per-core
+imbalance, not to estimate raw DRAM latency or bandwidth.
 
 \section{Power and Energy Measurement}
-Same as before say as good as possible as before it based on the job file also saying the different workload.
-Usa anche il tool
-Also show that we used CPU + GPU time for the GPU b/c ...
-Say the difference between CPU and TT/GPU for power measurement, aka Jouls vs Energy run base on integral of Power Samples.
+\label{sec:power-energy-method}
 
+CPU energy is read from cumulative RAPL counters. For the accelerator systems,
+device power is sampled through \texttt{nvidia-smi} or \texttt{tt-smi} and
+host energy through RAPL; the two contributions are integrated separately and
+added. Although power is sampled rather than measured continuously, the
+sampling is not expected to introduce a significant error. RAPL counters are
+cumulative, so the energy between two readings does not depend on the
+sampling interval, and each device trace collects enough samples to follow
+the power profile: about 20--40 per session for the A100, which is read
+roughly every 0.13~s, and about 19--35 for the Wormhole, which is read roughly
+every 0.73~s. Since power stays nearly constant within each phase of a
+session, such as idle, initialization, and search, the trapezoidal
+integration tracks it closely, and taking the median over ten sessions
+reduces whatever sampling error remains.
+
+On every host, RAPL energy is the sum of one top-level package counter
+(\texttt{package-*}) per socket. Their sub-domains, such as the core
+domain, are not added, so no energy is counted twice. The package domain
+covers the processor chip, including its cores, caches, and memory controller,
+but not the DRAM modules, power supply, fans, or storage, so the host values
+are a lower bound on the energy of the whole node. Although the Intel hosts
+also expose a separate RAPL domain for the DRAM modules, it is deliberately
+left out so that the same package-only boundary is used on all three
+systems. The AMD EPYC host of the Tenstorrent system provides no DRAM domain.
+It lists one package domain per die, eight in total over its two sockets, but
+the four domains of a socket report the same socket-wide counter, so its host
+energy is read from one domain per socket to avoid counting it four times.
+
+\paragraph{CPU.}
+The Slurm job enables energy profiling, and a background sampler reads the
+cumulative \texttt{energy\_uj} counters exposed through
+\texttt{/sys/class/powercap} at a nominal interval of 0.1~s. For an aggregate
+cumulative reading \(R_{\mathrm{RAPL}}(t)\) in microjoules,
+\begin{equation}
+E_{\mathrm{CPU}}
+=10^{-6}\left(R_{\mathrm{RAPL}}(t_{\mathrm{end}})
+-R_{\mathrm{RAPL}}(t_{\mathrm{start}})\right).
+\label{eq:workload-energy}
+\end{equation}
+Slurm affinity and the number of cores visible to Faiss were checked for each
+allocation.
+
+\paragraph{GPU.}
+One background stream samples the A100 board power from \texttt{nvidia-smi}
+and another samples the host's cumulative RAPL energy, with requested sleeps of
+50~ms and 100~ms. Command execution makes the effective cadence slower, so the
+recorded timestamps, not the requested periods, are used. The GPU trace is
+integrated with Equation~\ref{eq:tt-host-energy} and
+\begin{equation}
+E_{\mathrm{GPU+host}}=E_{\mathrm{GPU}}+E_{\mathrm{CPU,host}}.
+\label{eq:gpu-host-energy}
+\end{equation}
+For one session at the \((512,64)\) operating point, the board trace
+\(E_{\mathrm{GPU}}\) is also reported on its own, to compare the two
+accelerators device to device.
+
+\paragraph{Tenstorrent.}
+A Python profiler launches the C++ benchmark, polls device power through
+\texttt{tt-smi}, and records the host's cumulative RAPL counter. The external
+\texttt{tt-smi} call dominates the polling cadence: for the inspected
+\((512,32)\) run, the median gap between samples is about 0.73~s. \texttt{tt-smi}
+reports the chip power telemetry of the Wormhole firmware \cite{tt_smi},
+whereas \texttt{nvidia-smi} reports the power of the entire A100 board
+\cite{nvidia_smi}, so the two device boundaries are not identical.
+
+\paragraph{Integration.}
+For a sampled power trace with samples \((t_i,P_i)\), \(i=1,\ldots,m\), energy is
+estimated with the trapezoidal rule on the recorded timestamps,
+\begin{equation}
+E_{\mathrm{trace}}
+=\sum_{i=2}^{m}\frac{P_{i-1}+P_i}{2}\left(t_i-t_{i-1}\right),
+\label{eq:tt-host-energy}
+\end{equation}
+while cumulative RAPL counters use the difference in
+Equation~\ref{eq:workload-energy}. Energy is never reconstructed from an
+unweighted mean of power samples. Average power, where reported, is derived as
+integrated energy divided by elapsed session time. Amortized energy per query
+is
+\begin{equation}
+E_{\mathrm{query}}=\frac{E_{\mathrm{run}}}{100{,}000},
+\label{eq:energy-per-query}
+\end{equation}
+where \(E_{\mathrm{run}}\) is the median session energy; it includes the
+initialization share of the session and is not the energy of an isolated query.
+
+\section{Chapter Summary}
+\label{sec:methodology-summary}
+
+Throughput is the median of ten 10,000-query search repetitions, recall is
+evaluated outside all timed and monitored intervals, and energy is the median
+over ten complete 100,000-query sessions that include initialization. Because
+the Tenstorrent batch-level union changes the candidate set, cross-platform
+comparisons are matched by measured Recall@10. The next chapter reports the
+resulting throughput, stage decomposition, and energy.
 
 \cleardoublepage

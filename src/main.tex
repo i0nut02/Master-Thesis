@@ -1,16 +1,18 @@
 % ============================================== %
-% Author: Lucian Dorin Crainic <https://luciancrainic.github.io/>
-%
-% Thesis Title: Machine Learning for Human Movement Classification Based on Kinect Skeleton Data.
+% Author: Barbalata Radu Ionut <https://I0nut02.github.io/>
 % 
-% Bachelor of Science in Computer Science, Sapienza University of Rome.
+% Template: Lucian Dorin Crainic <https://luciancrainic.github.io/>
+%
+% Thesis Title: Approximate Nearest-Neighbor Search on the Tenstorrent Wormhole Architecture.
+% 
+% Master Degree in Computer Science, Sapienza University of Rome.
 %
 % https://github.com/LucianCrainic/bsc-thesis/
 %
 % ============================================== %
 
 % Document Class
-\documentclass[binding=0.6cm]{sapthesis}
+\documentclass{sapthesis}
 
 % Packages
 \usepackage{microtype}
@@ -27,16 +29,13 @@
 \usetikzlibrary{arrows.meta}
 \usepackage{subcaption}
 \usepackage{float}    
-\usepackage{lipsum}  
 \usepackage{xargs}                     
 \usepackage{booktabs}
 \usepackage{graphicx}
 \usepackage{makecell}
-\usepackage{booktabs}
 \usepackage{tabularx}
 \usepackage{longtable}
 \usepackage{threeparttable}
-\usepackage{amssymb}
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
 \usepackage[colorinlistoftodos,prependcaption,textsize=tiny]{todonotes}
@@ -44,7 +43,10 @@
 \hypersetup{
     colorlinks=true,
     linkcolor=blue,
-    citecolor=red
+    citecolor=red,
+    urlcolor=black,
+    pdftitle={Approximate Nearest-Neighbor Search on the Tenstorrent Wormhole Architecture},
+    pdfauthor={Barbalata Radu Ionut}
 }
 
 % Commands and Settings
@@ -52,6 +54,8 @@
 \newcommandx{\change}[2][1=]{\todo[linecolor=blue,backgroundcolor=blue!25,bordercolor=blue,#1]{#2}}
 \newcommandx{\info}[2][1=]{\todo[linecolor=OliveGreen,backgroundcolor=OliveGreen!25,bordercolor=OliveGreen,#1]{#2}}
 \newcommandx{\improvement}[2][1=]{\todo[linecolor=Plum,backgroundcolor=Plum!25,bordercolor=Plum,#1]{#2}}
+% Placeholder for values still to be measured; must not remain in the final PDF.
+\newcommand{\tbd}{\textcolor{red}{\textbf{TBD}}}
 \newcommandx{\thiswillnotshow}[2][1=]{\todo[disable,#1]{#2}}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \newcounter{boxlblcounter}  
@@ -87,20 +91,20 @@
 \lstset{style=mystyle}
 
 % Metadata
-\hypersetup{pdftitle={Thesis},pdfauthor={Lucian Dorin Crainic}, urlcolor=black, linkcolor=black, colorlinks=true}
-\title{TTAISS: Tenstorrent AI Similarity Search}
+\title{Approximate Nearest-Neighbor Search\\ on the Tenstorrent Wormhole Architecture}
 \author{Barbalata Radu Ionut}
 \IDnumber{2002688}
 \course{Master's Degree in Computer Science}
 \courseorganizer{Faculty of Information Engineering, Computer Science and Statistics}
-\AcademicYear{2026/2027}
-\advisor{Prof. De Sensi Daniele}
-\coadvisor{PhD student Piarulli Lorenzo}
+\AcademicYear{2025/2026}
+\advisor{Prof. Daniele De Sensi}
+\coadvisor{Lorenzo Piarulli}
 \authoremail{Barbalata.2002688@studenti.uniroma1.it}
 \copyyear{2026}
 \thesistype{Master's Thesis}
 
 % ================== DOCUMENT ==================
+\hyphenation{Architecture Tenstorrent}
 \begin{document}
 
 \lstset{language=Python}
@@ -111,7 +115,8 @@
 
 % ================== DEDICATION ==================
 \dedication{
-    \dots
+    To all the iterations that didn't work,\\
+    for teaching me what would.
 }
 % ================== ABSTRACT ==================
 
@@ -126,11 +131,13 @@
 
 \input{./chapter/background}
 
-\input{./chapter/Design}
+\input{./chapter/Design2} % original version: ./chapter/Design
 
-%\input{./chapter/Methodology}
+\input{./chapter/Methodology}
 
-%\input{./chapter/Results}
+\input{./chapter/Results}
+
+\input{./chapter/Conclusions}
 
 % ================== ACKNOWLEDGMENTS ==================
 \input{./chapter/ack}

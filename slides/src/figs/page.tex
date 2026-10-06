@@ -1,0 +1,23 @@
+\begin{tikzpicture}[x=5mm,y=5mm,font=\scriptsize]
+\foreach \r in {0,...,3}{\foreach \c in {0,...,3}{
+  \ifnum\c=3 \def\f{padc}\else\def\f{hostc}\fi
+  \draw[fill=\f] (\c,-\r) rectangle ++(1,1);}}
+\node[font=\small] at (2,1.7) {\(Q\)};
+\node at (4.8,-1) {\(\times\)};
+\foreach \r in {0,...,3}{\foreach \c in {0,...,3}{
+  \ifnum\c=3 \def\f{padc}\else\ifnum\r=3 \def\f{padc}\else\def\f{lA}\fi\fi
+  \draw[fill=\f] (5.6+\c,-\r) rectangle ++(1,1);}}
+\node[font=\small] at (7.6,1.7) {second page of A};
+\node at (10.4,-1) {\(=\)};
+\foreach \r in {0,...,3}{\foreach \c in {0,...,3}{
+  \ifnum\c=3 \def\f{padc}\else\def\f{devc}\fi
+  \draw[fill=\f] (11.2+\c,-\r) rectangle ++(1,1);}}
+\node[font=\small] at (13.2,1.7) {scores};
+\draw[darr] (15.6,-1) -- node[above,font=\scriptsize]{mask} (18,-1);
+\foreach \r in {0,...,3}{\foreach \c in {0,...,3}{
+  \ifnum\c=3 \draw[fill=red!25] (18.4+\c,-\r) rectangle ++(1,1);
+  \else \draw[fill=devc] (18.4+\c,-\r) rectangle ++(1,1);\fi}}
+\node[font=\scriptsize,red!60!black] at (21.9,1.7) {\(-10^4\)};
+\draw[darr] (22.8,-1) -- node[above,font=\scriptsize]{merge} (25,-1);
+\node[dbox,anchor=west,align=left] at (25.2,-1) {top-2 per query\\(scores + IDs)};
+\end{tikzpicture}
